@@ -25,3 +25,17 @@
 /projects/**/UserSettings/*
 /projects/**/obj/*
 *.sln.DotSettings.user
+
+# Unity WebGL/player build output (existing /builds/* is lowercase and misses Builds/)
+Builds/
+/projects/**/Builds/
+
+# Mono/Unity crash dumps
+mono_crash.*.json
+*.crash
+
+# Large gsplat source data (baked GaussianAssets are already ignored above)
+*.spz
+*.spz.meta
+*.sog
+*.sog.meta
