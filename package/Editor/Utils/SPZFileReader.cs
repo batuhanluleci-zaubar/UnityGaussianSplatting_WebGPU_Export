@@ -19,7 +19,7 @@ namespace GaussianSplatting.Editor.Utils
     {
         struct SpzHeader {
             public uint magic; // 0x5053474e "NGSP"
-            public uint version; // 2
+            public uint version; // 2 or 3
             public uint numPoints;
             public uint sh_fracbits_flags_reserved;
         };
@@ -30,10 +30,10 @@ namespace GaussianSplatting.Editor.Utils
                 return;
             using var fs = File.OpenRead(filePath);
             using var gz = new GZipStream(fs, CompressionMode.Decompress);
-            ReadHeaderImpl(filePath, gz, out vertexCount, out _, out _, out _);
+            ReadHeaderImpl(filePath, gz, out vertexCount, out _, out _, out _, out _);
         }
 
-        static void ReadHeaderImpl(string filePath, Stream fs, out int vertexCount, out int shLevel, out int fractBits, out int flags)
+        static void ReadHeaderImpl(string filePath, Stream fs, out int vertexCount, out int shLevel, out int fractBits, out int flags, out int version)
         {
             var header = new NativeArray<SpzHeader>(1, Allocator.Temp);
             var readBytes = fs.Read(header.Reinterpret<byte>(16));
@@ -42,9 +42,11 @@ namespace GaussianSplatting.Editor.Utils
 
             if (header[0].magic != 0x5053474e)
                 throw new IOException($"SPZ {filePath} read error, header magic unexpected {header[0].magic}");
-            if (header[0].version != 2)
+            // v2: rotations packed as "first three" (3 bytes); v3: "smallest three" (4 bytes). Both supported.
+            if (header[0].version != 2 && header[0].version != 3)
                 throw new IOException($"SPZ {filePath} read error, header version unexpected {header[0].version}");
 
+            version = (int)header[0].version;
             vertexCount = (int)header[0].numPoints;
             shLevel = (int)(header[0].sh_fracbits_flags_reserved & 0xFF);
             fractBits = (int)((header[0].sh_fracbits_flags_reserved >> 8) & 0xFF);
@@ -67,7 +69,7 @@ namespace GaussianSplatting.Editor.Utils
         {
             using var fs = File.OpenRead(filePath);
             using var gz = new GZipStream(fs, CompressionMode.Decompress);
-            ReadHeaderImpl(filePath, gz, out var splatCount, out var shLevel, out var fractBits, out var flags);
+            ReadHeaderImpl(filePath, gz, out var splatCount, out var shLevel, out var fractBits, out var flags, out var version);
 
             if (splatCount < 1 || splatCount > 10_000_000) // 10M hardcoded in SPZ code
                 throw new IOException($"SPZ {filePath} read error, out of range splat count {splatCount}");
@@ -76,11 +78,15 @@ namespace GaussianSplatting.Editor.Utils
             if (fractBits < 0 || fractBits > 24)
                 throw new IOException($"SPZ {filePath} read error, out of range fractional bits {fractBits}");
 
+            // v3 packs rotations with "smallest three" (4 bytes/point); v2 uses "first three" (3 bytes/point)
+            bool rotSmallestThree = version >= 3;
+            int rotStride = rotSmallestThree ? 4 : 3;
+
             // allocate temporary storage
             int shCoeffs = SHCoeffsForLevel(shLevel);
             NativeArray<byte> packedPos = new(splatCount * 3 * 3, Allocator.Persistent);
             NativeArray<byte> packedScale = new(splatCount * 3, Allocator.Persistent);
-            NativeArray<byte> packedRot = new(splatCount * 3, Allocator.Persistent);
+            NativeArray<byte> packedRot = new(splatCount * rotStride, Allocator.Persistent);
             NativeArray<byte> packedAlpha = new(splatCount, Allocator.Persistent);
             NativeArray<byte> packedCol = new(splatCount * 3, Allocator.Persistent);
             NativeArray<byte> packedSh = new(splatCount * 3 * shCoeffs, Allocator.Persistent);
@@ -104,6 +110,8 @@ namespace GaussianSplatting.Editor.Utils
             job.packedCol = packedCol;
             job.packedSh = packedSh;
             job.shCoeffs = shCoeffs;
+            job.rotSmallestThree = rotSmallestThree;
+            job.rotStride = rotStride;
             job.fractScale = 1.0f / (1 << fractBits);
             job.splats = splats;
             job.Schedule(splatCount, 4096).Complete();
@@ -134,6 +142,8 @@ namespace GaussianSplatting.Editor.Utils
             [NativeDisableParallelForRestriction] [ReadOnly] public NativeArray<byte> packedSh;
             public float fractScale;
             public int shCoeffs;
+            public bool rotSmallestThree;
+            public int rotStride;
             public NativeArray<InputSplatData> splats;
 
             public void Execute(int index)
@@ -145,9 +155,17 @@ namespace GaussianSplatting.Editor.Utils
                 splat.scale = new Vector3(packedScale[index * 3 + 0], packedScale[index * 3 + 1], packedScale[index * 3 + 2]) / 16.0f - new Vector3(10.0f, 10.0f, 10.0f);
                 splat.scale = GaussianUtils.LinearScale(splat.scale);
 
-                Vector3 xyz = new Vector3(packedRot[index * 3 + 0], packedRot[index * 3 + 1], packedRot[index * 3 + 2]) * (1.0f / 127.5f) - new Vector3(1, 1, 1);
-                float w = math.sqrt(math.max(0.0f, 1.0f - xyz.sqrMagnitude));
-                var q = new float4(xyz.x, xyz.y, xyz.z, w);
+                float4 q;
+                if (rotSmallestThree)
+                {
+                    q = UnpackQuatSmallestThree(index);
+                }
+                else
+                {
+                    Vector3 xyz = new Vector3(packedRot[index * 3 + 0], packedRot[index * 3 + 1], packedRot[index * 3 + 2]) * (1.0f / 127.5f) - new Vector3(1, 1, 1);
+                    float w = math.sqrt(math.max(0.0f, 1.0f - xyz.sqrMagnitude));
+                    q = new float4(xyz.x, xyz.y, xyz.z, w);
+                }
                 var qq = math.normalize(q);
                 qq = GaussianUtils.PackSmallest3Rotation(qq);
                 splat.rot = new Quaternion(qq.x, qq.y, qq.z, qq.w);
@@ -177,6 +195,39 @@ namespace GaussianSplatting.Editor.Utils
                 splat.shF = UnpackSH(shIdx); shIdx += 3;
 
                 splats[index] = splat;
+            }
+
+            // SPZ v3 "smallest three" quaternion: 4 bytes -> (x,y,z,w).
+            // bits 30-31 = index of largest (dropped) component; remaining three 10-bit fields
+            // each hold a sign bit (bit 9) + 9-bit magnitude, scaled by sqrt(1/2); largest = sqrt(1 - sum^2).
+            float4 UnpackQuatSmallestThree(int index)
+            {
+                int b = index * rotStride;
+                uint comp = (uint)packedRot[b]
+                    | ((uint)packedRot[b + 1] << 8)
+                    | ((uint)packedRot[b + 2] << 16)
+                    | ((uint)packedRot[b + 3] << 24);
+                const uint cMask = (1u << 9) - 1u; // 511
+                const float sqrt1_2 = 0.70710678118654752440f;
+                int iLargest = (int)(comp >> 30);
+                float4 r = float4.zero;
+                float sumSq = 0.0f;
+                for (int i = 3; i >= 0; --i)
+                {
+                    if (i != iLargest)
+                    {
+                        uint mag = comp & cMask;
+                        uint negbit = (comp >> 9) & 0x1u;
+                        comp >>= 10;
+                        float val = sqrt1_2 * (float)mag / (float)cMask;
+                        if (negbit == 1u)
+                            val = -val;
+                        r[i] = val;
+                        sumSq += val * val;
+                    }
+                }
+                r[iLargest] = math.sqrt(math.max(0.0f, 1.0f - sumSq));
+                return r;
             }
 
             float UnpackFloat(int idx)
