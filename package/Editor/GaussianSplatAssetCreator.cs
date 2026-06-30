@@ -420,7 +420,17 @@ namespace GaussianSplatting.Editor
             order.Schedule(splatData.Length, 4096).Complete();
             order.m_Order.Sort(new OrderComparer());
 
-            NativeArray<InputSplatData> copy = new(order.m_SplatData, Allocator.TempJob);
+            // NOTE: do NOT use NativeArray's copy constructor / NativeArray.Copy here. They compute the
+            // byte size as (int length * int sizeof(T)), which overflows int32 once the array exceeds ~2GB
+            // (InputSplatData is 248 bytes, so >~8.66M splats), producing a negative size that crashes
+            // memmove with a SIGSEGV. Copy via a 64-bit byte count so large splat counts work.
+            int splatCount = order.m_SplatData.Length;
+            NativeArray<InputSplatData> copy = new(splatCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory);
+            unsafe
+            {
+                long byteCount = (long)splatCount * UnsafeUtility.SizeOf<InputSplatData>();
+                UnsafeUtility.MemCpy(copy.GetUnsafePtr(), order.m_SplatData.GetUnsafeReadOnlyPtr(), byteCount);
+            }
             for (int i = 0; i < copy.Length; ++i)
                 order.m_SplatData[i] = copy[order.m_Order[i].Item2];
             copy.Dispose();
