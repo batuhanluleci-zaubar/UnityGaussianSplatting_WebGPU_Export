@@ -504,27 +504,31 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5363423381864368786, guid: ca73e76a933b2ed43a01624109ba43da, type: 3}
       propertyPath: m_LocalPosition.x
-      value: -223.22597
+      value: -442.37918
+      objectReference: {fileID: 0}
+    - target: {fileID: 5363423381864368786, guid: ca73e76a933b2ed43a01624109ba43da, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 22.929588
       objectReference: {fileID: 0}
     - target: {fileID: 5363423381864368786, guid: ca73e76a933b2ed43a01624109ba43da, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 209.23407
+      value: 581.72473
       objectReference: {fileID: 0}
     - target: {fileID: 5363423381864368786, guid: ca73e76a933b2ed43a01624109ba43da, type: 3}
       propertyPath: m_LocalRotation.w
-      value: 0.30042985
+      value: 0.30070588
       objectReference: {fileID: 0}
     - target: {fileID: 5363423381864368786, guid: ca73e76a933b2ed43a01624109ba43da, type: 3}
       propertyPath: m_LocalRotation.x
-      value: -0.012880274
+      value: 0.0000000010869614
       objectReference: {fileID: 0}
     - target: {fileID: 5363423381864368786, guid: ca73e76a933b2ed43a01624109ba43da, type: 3}
       propertyPath: m_LocalRotation.y
-      value: 0.9528417
+      value: 0.95371693
       objectReference: {fileID: 0}
     - target: {fileID: 5363423381864368786, guid: ca73e76a933b2ed43a01624109ba43da, type: 3}
       propertyPath: m_LocalRotation.z
-      value: 0.040851004
+      value: -0.0000000034473997
       objectReference: {fileID: 0}
     - target: {fileID: 7279151852685462590, guid: ca73e76a933b2ed43a01624109ba43da, type: 3}
       propertyPath: field of view
@@ -532,11 +536,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 7279151852685462590, guid: ca73e76a933b2ed43a01624109ba43da, type: 3}
       propertyPath: far clip plane
-      value: 5000
+      value: 1954.4385
       objectReference: {fileID: 0}
     - target: {fileID: 7279151852685462590, guid: ca73e76a933b2ed43a01624109ba43da, type: 3}
       propertyPath: near clip plane
-      value: 0.1
+      value: 0.3
       objectReference: {fileID: 0}
     - target: {fileID: 7279151852685462590, guid: ca73e76a933b2ed43a01624109ba43da, type: 3}
       propertyPath: orthographic size
@@ -673,8 +677,8 @@ GameObject:
   - component: {fileID: 784401714}
   - component: {fileID: 784401713}
   - component: {fileID: 784401712}
-  - component: {fileID: 784401711}
   - component: {fileID: 784401715}
+  - component: {fileID: 784401711}
   m_Layer: 0
   m_Name: CM Tour Camera
   m_TagString: Untagged
@@ -783,8 +787,8 @@ MonoBehaviour:
   Lens:
     FieldOfView: 40
     OrthographicSize: 10
-    NearClipPlane: 0.1
-    FarClipPlane: 5000
+    NearClipPlane: 0.3
+    FarClipPlane: 1954.4385
     Dutch: 0
     ModeOverride: 0
     PhysicalProperties:
@@ -808,8 +812,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 784401710}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.030287834, y: -0.70645785, z: -0.030287834, w: 0.70645785}
-  m_LocalPosition: {x: 190.33165, y: 37.4, z: 37.84424}
+  m_LocalRotation: {x: 0.0000000025559783, y: -0.7071068, z: 0.0000000025559783, w: 0.7071068}
+  m_LocalPosition: {x: 621.15924, y: 60.32959, z: 3.7121582}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children: []
@@ -906,7 +910,7 @@ Transform:
   m_GameObject: {fileID: 841947949}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 34.020996, y: 50.827637, z: 37.84424}
+  m_LocalPosition: {x: -11.706543, y: 60.32959, z: 3.7121582}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children: []
@@ -1062,148 +1066,148 @@ MonoBehaviour:
   - m_EditModeType: 1
     m_Knots:
     - Position:
-        x: 190.33165
-        y: 37.4
-        z: 37.84424
+        x: 621.15924
+        y: 60.32959
+        z: 3.7121582
       TangentIn:
         x: -0
         y: -0
-        z: -36.934753
+        z: -149.90927
       TangentOut:
         x: 0
         y: 0
-        z: 36.93476
+        z: 149.9093
       Rotation:
         value:
-          x: -0.035263486
-          y: 0.0013488652
-          z: 0.038200125
-          w: 0.99864686
+          x: -0.049655396
+          y: 0.0026879036
+          z: 0.05398611
+          w: 0.9973027
     - Position:
-        x: 144.54932
-        y: 45.215534
-        z: 148.37256
+        x: 435.79715
+        y: 105.00247
+        z: 451.21585
       TangentIn:
         x: -0
         y: -0
-        z: -36.842777
+        z: -149.16791
       TangentOut:
         x: 0
         y: 0
-        z: 36.842777
+        z: 149.16791
       Rotation:
         value:
-          x: 0.0000000024979734
-          y: -0.38268346
-          z: 0.0000000010346944
+          x: 7.446797e-10
+          y: -0.3826835
+          z: 3.084565e-10
           w: 0.92387956
     - Position:
-        x: 34.02099
-        y: 37.4
-        z: 194.15489
+        x: -11.706571
+        y: 60.329586
+        z: 636.57794
       TangentIn:
         x: -0
         y: -0
-        z: -36.934765
+        z: -149.90935
       TangentOut:
         x: 0
         y: 0
-        z: 36.934765
+        z: 149.90932
       Rotation:
         value:
-          x: 0.023868399
-          y: 0.70670384
-          z: -0.07365599
-          w: -0.7032601
+          x: 0.03322298
+          y: 0.7063259
+          z: -0.10322022
+          w: -0.69953245
     - Position:
-        x: -76.507324
-        y: 29.584469
-        z: 148.37256
+        x: -459.21024
+        y: 15.656712
+        z: 451.21585
       TangentIn:
         x: -0
         y: -0
-        z: -36.84277
+        z: -149.1679
       TangentOut:
         x: 0
         y: 0
-        z: 36.842773
+        z: 149.16791
       Rotation:
         value:
-          x: 0.016324237
-          y: 0.9237353
-          z: -0.006761727
-          w: -0.38262367
+          x: 0.023034662
+          y: 0.9235923
+          z: -0.009541267
+          w: -0.38256443
     - Position:
-        x: -122.28966
-        y: 37.4
-        z: 37.844223
+        x: -644.5723
+        y: 60.329597
+        z: 3.712103
       TangentIn:
         x: -0
         y: -0
-        z: -36.93477
+        z: -149.90932
       TangentOut:
         x: 0
         y: 0
-        z: 36.93477
+        z: 149.90932
       Rotation:
         value:
-          x: -0.01632129
-          y: 0.9992439
-          z: 0.035284556
-          w: 0.00057636196
+          x: -0.023026753
+          y: 0.9984973
+          z: 0.04971486
+          w: 0.0011465527
     - Position:
-        x: -76.50731
-        y: 45.215534
-        z: -72.684105
+        x: -459.21014
+        y: 105.00247
+        z: -443.7916
       TangentIn:
         x: -0
         y: -0
-        z: -36.842773
+        z: -149.1679
       TangentOut:
         x: 0
         y: 0
-        z: 36.842766
+        z: 149.1679
       Rotation:
         value:
-          x: -0.004783324
-          y: 0.9238671
-          z: -0.0019813231
-          w: 0.3826783
+          x: -0.0067525464
+          y: 0.9238548
+          z: -0.002797008
+          w: 0.38267326
     - Position:
-        x: 34.020996
-        y: 37.4
-        z: -118.466415
+        x: -11.706535
+        y: 60.32959
+        z: -629.1536
       TangentIn:
         x: -0
         y: -0
-        z: -36.934765
+        z: -149.9093
       TangentOut:
         x: 0
         y: 0
-        z: 36.934776
+        z: 149.90935
       Rotation:
         value:
-          x: 0.027667182
-          y: 0.7065652
-          z: -0.02223899
-          w: 0.70675695
+          x: 0.039000362
+          y: 0.70603037
+          z: -0.031324733
+          w: 0.7064126
     - Position:
-        x: 144.54936
-        y: 29.584469
-        z: -72.684044
+        x: 435.7973
+        y: 15.656712
+        z: -443.79138
       TangentIn:
         x: -0
         y: -0
-        z: -36.84279
+        z: -149.16792
       TangentOut:
         x: 0
         y: 0
-        z: 36.842766
+        z: 149.16786
       Rotation:
         value:
-          x: -0.000000017584442
-          y: 0.38268337
-          z: 0.0000000072837145
+          x: -0.000000020350162
+          y: 0.38268334
+          z: 0.000000008429311
           w: 0.9238796
     m_MetaData:
     - Mode: 0
@@ -1259,6 +1263,7 @@ GameObject:
   - component: {fileID: 1557083089}
   - component: {fileID: 1557083088}
   - component: {fileID: 1557083090}
+  - component: {fileID: 1557083091}
   m_Layer: 0
   m_Name: XR Bootstrap
   m_TagString: Untagged
@@ -1315,6 +1320,25 @@ MonoBehaviour:
   m_EnableOctreeCulling: 1
   m_CullingUpdateInterval: 2
   m_Transparency: 1
+--- !u!114 &1557083091
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1557083087}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b7d4c1c088397445584a41822a683b41, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GsplatTour.XrSplatPlacer
+  m_Splat: {fileID: 2063086643}
+  m_Head: {fileID: 244846088}
+  m_TargetRadius: 0.75
+  m_Distance: 1.5
+  m_HeightOffset: 0
+  m_OnlyUnderXR: 1
+  m_PlaceOnStart: 1
 --- !u!1 &1678554943
 GameObject:
   m_ObjectHideFlags: 0
