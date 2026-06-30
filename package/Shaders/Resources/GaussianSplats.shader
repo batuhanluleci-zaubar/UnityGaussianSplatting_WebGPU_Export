@@ -110,9 +110,12 @@ v2f vert (uint vtxID : SV_VertexID, uint instID : SV_InstanceID)
     cov3d0 *= splatScale2;
     cov3d1 *= splatScale2;
     
-    // Project 3D covariance to 2D screen space
+    // Project 3D covariance to 2D screen space.
+    // Use Unity's built-in model-view (UNITY_MATRIX_MV) rather than the cached _MatrixMV: in
+    // mono it is identical, but under XR multi-pass it is per-eye, which makes the splat shape
+    // (and the corrected screen centre below) render with correct stereo parallax.
     float2 screenCenter2D;
-    float3 cov2d = CalcCovariance2D(splat.pos, cov3d0, cov3d1, _MatrixMV, UNITY_MATRIX_P, _VecScreenParams, screenCenter2D);
+    float3 cov2d = CalcCovariance2D(splat.pos, cov3d0, cov3d1, UNITY_MATRIX_MV, UNITY_MATRIX_P, _VecScreenParams, screenCenter2D);
     
     // Update clip position with corrected screen center
     float4 centerClipPosCorrected = centerClipPos;
@@ -130,8 +133,9 @@ v2f vert (uint vtxID : SV_VertexID, uint instID : SV_InstanceID)
         return o;
     }
     
-    // Calculate color using spherical harmonics
-    float3 worldViewDir = _VecWorldSpaceCameraPos.xyz - centerWorldPos;
+    // Calculate color using spherical harmonics. _WorldSpaceCameraPos is the built-in camera
+    // position (per-eye under XR multi-pass) so view-dependent SH is correct for each eye.
+    float3 worldViewDir = _WorldSpaceCameraPos.xyz - centerWorldPos;
     float3 objViewDir = mul((float3x3)_MatrixWorldToObject, worldViewDir);
     objViewDir = normalize(objViewDir);
     half3 col = ShadeSH(splat.sh, objViewDir, _SHOrder, _SHOnly != 0);

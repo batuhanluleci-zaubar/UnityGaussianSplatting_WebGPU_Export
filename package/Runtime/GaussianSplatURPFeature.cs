@@ -90,6 +90,9 @@ namespace GaussianSplatting.Runtime
 
                     var settings = GaussianSplatSettings.instance;
                     var usingRT = !settings.isDebugRender;
+                    // XR multi-pass: the temporal filter relies on a single history buffer and per-eye
+                    // motion vectors it doesn't produce, so it would ghost across eyes. Disable under XR.
+                    var temporalOn = settings.m_TemporalFilter != TemporalFilter.None && !UnityEngine.XR.XRSettings.isDeviceActive;
 
                     var commandBuffer = CommandBufferHelpers.GetNativeCommandBuffer(context.cmd);
                     using var _ = new ProfilingScope(commandBuffer, s_profilingSampler);
@@ -100,7 +103,7 @@ namespace GaussianSplatting.Runtime
                         commandBuffer.SetGlobalTexture(GaussianSplatRenderer.Props.GaussianSplatRT, data.GaussianSplatRT);
                         commandBuffer.SetGlobalTexture(GaussianSplatRenderer.Props.GaussianSplatMotionRT, data.GaussianSplatMotionRT);
                         
-                        if (settings.m_TemporalFilter != TemporalFilter.None)
+                        if (temporalOn)
                         {
                             // Render to both color and motion RTs
                             CoreUtils.SetRenderTarget(commandBuffer,
@@ -121,7 +124,7 @@ namespace GaussianSplatting.Runtime
                     if (usingRT)
                     {
                         commandBuffer.BeginSample(GaussianSplatRenderSystem.s_ProfCompose);
-                        if (settings.m_TemporalFilter != TemporalFilter.None)
+                        if (temporalOn)
                         {
                             // use temporal filter to composite; pass the render graph texture handles directly
                             system.GetTemporalFilter().Render(commandBuffer, data.CameraData.camera, matComposite, 1,

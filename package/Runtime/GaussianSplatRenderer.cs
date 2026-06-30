@@ -241,7 +241,10 @@ namespace GaussianSplatting.Runtime
 
             m_GlobalUniforms ??= new GraphicsBuffer(GraphicsBuffer.Target.Constant, 1, UnsafeUtility.SizeOf<SplatGlobalUniforms>());
             NativeArray<SplatGlobalUniforms> sgu = new(1, Allocator.Temp);
-            sgu[0] = new SplatGlobalUniforms { transparencyMode = (uint)settings.m_Transparency, frameOffset = m_FrameOffset, needMotionVectors = (uint)settings.m_TemporalFilter};
+            // Motion vectors feed the temporal filter, which is disabled under XR (see GaussianSplatURPFeature),
+            // so don't compute them there either.
+            var effTemporalFilter = XRSettings.isDeviceActive ? TemporalFilter.None : settings.m_TemporalFilter;
+            sgu[0] = new SplatGlobalUniforms { transparencyMode = (uint)settings.m_Transparency, frameOffset = m_FrameOffset, needMotionVectors = (uint)effTemporalFilter};
             cmb.SetBufferData(m_GlobalUniforms, sgu);
             m_FrameOffset++;
 

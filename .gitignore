@@ -39,3 +39,8 @@ mono_crash.*.json
 *.spz.meta
 *.sog
 *.sog.meta
+
+# Editor screenshot artifacts
+Screenshots/
+/projects/**/Assets/Screenshots/
+/projects/**/Assets/Screenshots.meta

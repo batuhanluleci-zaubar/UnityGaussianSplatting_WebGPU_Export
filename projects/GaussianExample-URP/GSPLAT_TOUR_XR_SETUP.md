@@ -85,14 +85,46 @@ design** — it sets the camera position / screen params **once per frame**
 single-pass-instanced stereo path (no `unity_StereoEyeIndex`, no per-eye sort/projection).
 
 Consequence on an HMD:
-- The app runs, is head-tracked, and the splat **renders** — but it is effectively **mono**.
-  We selected **Multi-pass** OpenXR rendering so the splat pass re-runs per eye (best results
-  this renderer can give without changes); true per-eye parallax still needs renderer work.
+The original renderer cached a single (mono) model-view matrix and reused it for both eyes.
 
-**To get correct stereo (future work):** extend the renderer to evaluate the splat
-sort + projection **per eye** (or add single-pass-instanced support feeding per-eye view
-matrices into the splat compute/shader). This is a real engineering task and is the likely
-reason a dedicated XR gsplat project exists separately.
+### ✅ Stereo correctness — implemented (multi-pass)
+
+The render path already supports multi-pass stereo structurally (the splat RT inherits
+`cameraTargetDescriptor`, the composite uses XR-aware `Blitter.BlitCameraTexture`). The only
+mono assumption was in the shader, now fixed:
+
+- `GaussianSplats.shader` projects the 2D covariance and the corrected screen centre with
+  **`UNITY_MATRIX_MV`** instead of the cached mono `_MatrixMV` — identical in mono, **per-eye
+  under multi-pass**, so splat shape + parallax are now correct for each eye.
+- View-dependent SH uses the built-in per-eye `_WorldSpaceCameraPos`.
+- The **temporal filter is disabled under XR** (`GaussianSplatURPFeature` + `GaussianSplatRenderer`):
+  its single history buffer / per-eye motion vectors would ghost across eyes.
+
+Verified in the editor: mono rendering is byte-for-byte unchanged (the substitution is an
+identity in mono); stereo correctness is by-construction and needs final on-device confirmation.
+
+### ✅ Performance tuning — implemented (`XrPerformanceTuner`)
+
+`Assets/Scripts/Cinematic/XrPerformanceTuner.cs` (on **XR Bootstrap**, applied only under XR):
+
+- **Per-eye resolution scale** (`XRSettings.eyeTextureResolutionScale`, default **0.7**) — the
+  single biggest fill-rate lever; the splat RT inherits it. This is what actually buys FPS.
+- **Foveated rendering** — OpenXR `FoveatedRenderingFeature` is enabled and the tuner sets the
+  display foveation level (Adreno fixed foveation).
+- **Sort/cull throttle** — ensures octree culling on and re-culls/re-sorts every 2 frames
+  (`m_OctreeCullingUpdateInterval`); option to switch transparency to **Stochastic** (no depth
+  sort) for more speed at the cost of some noise.
+
+All values are inspector-tunable; drive the finals from on-device profiling.
+
+### Remaining (optional, device-gated)
+- **Single-pass-instanced** rendering for max perf — non-trivial here because the splat draw uses
+  `SV_InstanceID` for the splat index (collides with eye instancing). Multi-pass + 0.7 res +
+  foveation is expected to be sufficient for the ~195K asset.
+- **Foveation on the splat RT pass specifically** — fixed foveation applies to the eye buffers;
+  if profiling shows the custom splat pass isn't benefiting, it must opt into VRS explicitly.
+- **On-device profiling** (Snapdragon Profiler / Unity GPU Profiler) to set the final
+  resolution scale, cull interval, and splat budget.
 
 ---
 
@@ -100,4 +132,9 @@ reason a dedicated XR gsplat project exists separately.
 - `Assets/Scripts/Cinematic/SplineCinematicDirector.cs` — desktop tour driver.
 - `Assets/Scripts/Cinematic/XrTourRigDriver.cs` — optional on-rails AR tour (rig follows spline).
 - `Assets/Scripts/Cinematic/XrSceneBootstrap.cs` — desktop-vs-XR mode switch at startup.
+- `Assets/Scripts/Cinematic/XrPerformanceTuner.cs` — XR resolution/foveation/cull tuning.
 - `Assets/XR/XRGeneralSettingsPerBuildTarget.asset` — XR Plug-in Management (OpenXR for Android).
+
+## Renderer changes (in `package/`)
+- `Shaders/Resources/GaussianSplats.shader` — per-eye `UNITY_MATRIX_MV` + `_WorldSpaceCameraPos`.
+- `Runtime/GaussianSplatURPFeature.cs` + `Runtime/GaussianSplatRenderer.cs` — disable temporal filter under XR.

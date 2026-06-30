@@ -1258,6 +1258,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1557083089}
   - component: {fileID: 1557083088}
+  - component: {fileID: 1557083090}
   m_Layer: 0
   m_Name: XR Bootstrap
   m_TagString: Untagged
@@ -1296,6 +1297,24 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1557083090
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1557083087}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 71fd5c33b692a4e179afb60117ebb697, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GsplatTour.XrPerformanceTuner
+  m_OnlyUnderXR: 1
+  m_EyeResolutionScale: 0.7
+  m_FoveationLevel: 1
+  m_EnableOctreeCulling: 1
+  m_CullingUpdateInterval: 2
+  m_Transparency: 1
 --- !u!1 &1678554943
 GameObject:
   m_ObjectHideFlags: 0
