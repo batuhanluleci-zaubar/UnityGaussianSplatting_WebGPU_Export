@@ -53,11 +53,20 @@ Grounded in: `playcanvas/splat-transform` (offline format) + `playcanvas/engine`
   (it is a distant-skybox concept; the pool's resident visible chunks already are the coarse
   floor). Limitation: CPU-side `.asset` objects still load upfront via `AssetDatabase`; the GPU
   residency (buffers) is what's bounded/streamed. True instant-load = async disk IO next.
-- ⏳ **Phase 2 M2+** — async asset IO (Addressables / raw-byte) for real instant-load; finer
-  chunking to exercise eviction at scale; then (2b) a single GPU **buffer pool + BlockAllocator**
-  with **inline colour** (raw-byte, no per-asset colour texture) for one unified draw + sort,
-  replacing the N pooled renderers. Gate the buffer-pool rewrite on measured N-renderer overhead
-  / an XR memory-ceiling breach.
+- 🟢 **Phase 2 M2 — async Addressables streaming** (`GaussianLodStreamAsync.cs`). Replaces the
+  editor-only `AssetDatabase` path (which returns null in a build!) with `Addressables.LoadAssetAsync`
+  (non-blocking, **works in an Android/XR build**) + `Addressables.Release` on eviction — Addressables
+  ref-counts the asset **and its `.bytes` dependencies**, so CPU memory is genuinely bounded, not just
+  GPU. never-drop-visible: a chunk keeps its shown level until the finer one finishes loading, then
+  swaps + releases the old handle. **Verified:** wide view all 16 chunks stream in coarse-first (179 K
+  total), near view refines async to L0=8/L1=2/L2=1 (1.08 M, budget-held), off-screen chunks evicted +
+  released, no Addressables errors/leaks, 93 FPS. Setup (per bake): the chunk/LOD/env `.asset`s must be
+  marked Addressable with address = asset name (one-time editor step; assets are gitignored/regenerable,
+  so re-run after re-baking — see the reflection snippet in the M2 commit or automate as a menu item).
+- ⏳ **Phase 2 M3 / 2b** — finer chunking to exercise eviction at scale; measure N-renderer overhead
+  on Adreno; then (2b) a single GPU **buffer pool + BlockAllocator** with **inline colour** (raw-byte,
+  no per-asset colour texture) for one unified draw + sort, replacing the N pooled renderers. Gate the
+  buffer-pool rewrite on measured N-renderer overhead / an XR memory-ceiling breach.
 
 ## 1. What SuperSplat "Streamed SOG" actually is
 

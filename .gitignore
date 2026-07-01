@@ -61,3 +61,10 @@ __pycache__/
 
 # Phase 2 throwaway scene (references gitignored GaussianAssets)
 /projects/**/Assets/Phase2LOD.unity*
+
+# Addressables config (group entries reference gitignored/regenerable baked assets)
+/projects/**/Assets/AddressableAssetsData/
+/projects/**/Assets/AddressableAssetsData.meta
+
+# Phase 2 async throwaway scene
+/projects/**/Assets/Phase2Async.unity*
