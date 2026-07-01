@@ -147,6 +147,10 @@ namespace GaussianSplatting.Runtime
         static readonly ProfilerMarker s_SortStartMarker = new ProfilerMarker("GaussianSplatOctree.Sort.Start");       // (b) StartNativeSortJobs or ParallelSortVisibleNodes
         static readonly ProfilerMarker s_SortWaitMarker = new ProfilerMarker("GaussianSplatOctree.Sort.Wait");         // (c) CollectNativeSortResults or Task.WaitAll
         static readonly ProfilerMarker s_SortAppendMarker = new ProfilerMarker("GaussianSplatOctree.Sort.Append");     // (d) append into m_VisibleSplatIndices
+        // Slice 2 / Rank 1: split (d) Append into CPU strided-copy and GPU upload so we can attribute
+        // the LockBufferForWrite win separately from the per-node List<int>->NativeArray copy loop.
+        static readonly ProfilerMarker s_SortAppendCpuMarker = new ProfilerMarker("GaussianSplatOctree.Sort.AppendCpu");       // (d1) strided List<int> -> NativeArray fill
+        static readonly ProfilerMarker s_SortAppendUploadMarker = new ProfilerMarker("GaussianSplatOctree.Sort.AppendUpload"); // (d2) UpdateVisibleIndicesBuffer GPU upload
 
         // Global native positions buffer (all splat positions) to avoid per-job copying
         NativeArray<float3> m_AllPositionsNative;
@@ -1066,6 +1070,8 @@ namespace GaussianSplatting.Runtime
             }
             // TEMP sub-marker (d): append sorted per-node lists into m_VisibleSplatIndices (screen-space LOD stride, budget cap, GraphicsBuffer upload)
             using var _sortAppendScope = s_SortAppendMarker.Auto();
+            // Slice 2 / Rank 1: CPU-strided-copy sub-marker opens here; closed BEFORE UpdateVisibleIndicesBuffer.
+            s_SortAppendCpuMarker.Begin();
             // Append nodes in distance order (their lists now internally sorted and persistent)
             int currentIndex = 0;
 
@@ -1091,7 +1097,10 @@ namespace GaussianSplatting.Runtime
                         if (!m_VisibleSplatIndicesValid || !m_VisibleSplatIndices.IsCreated)
                         {
                             visibleSplatCount = currentIndex;
+                            s_SortAppendCpuMarker.End();
+                            s_SortAppendUploadMarker.Begin();
                             UpdateVisibleIndicesBuffer();
+                            s_SortAppendUploadMarker.End();
                             return;
                         }
                     }
@@ -1162,11 +1171,14 @@ namespace GaussianSplatting.Runtime
                     if (!m_VisibleSplatIndicesValid || !m_VisibleSplatIndices.IsCreated)
                     {
                         visibleSplatCount = currentIndex;
+                        s_SortAppendCpuMarker.End();
+                        s_SortAppendUploadMarker.Begin();
                         UpdateVisibleIndicesBuffer();
+                        s_SortAppendUploadMarker.End();
                         return;
                     }
                 }
-                
+
                 for (int i = 0; i < m_OthersIndices.Count; i++)
                 {
                     m_VisibleSplatIndices[currentIndex + i] = m_OthersIndices[i];
@@ -1181,7 +1193,11 @@ namespace GaussianSplatting.Runtime
                 currentIndex = lodBudget;
 
             visibleSplatCount = currentIndex;
+            // Slice 2 / Rank 1: close CPU sub-marker, then measure GPU upload separately.
+            s_SortAppendCpuMarker.End();
+            s_SortAppendUploadMarker.Begin();
             UpdateVisibleIndicesBuffer();
+            s_SortAppendUploadMarker.End();
             // (d) closed by _sortAppendScope.Dispose()
         }
 
