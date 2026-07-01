@@ -28,9 +28,18 @@ namespace GsplatLod
         ProfilerRecorder m_SortRec;
         ProfilerRecorder m_SubmitRec;
         ProfilerRecorder m_MainRec;
+        // TEMP: sub-stage recorders for the SortVisibleSplatsByDepth breakdown (remove with the octree markers)
+        ProfilerRecorder m_SortCollectRec;
+        ProfilerRecorder m_SortStartRec;
+        ProfilerRecorder m_SortWaitRec;
+        ProfilerRecorder m_SortAppendRec;
         readonly double[] m_SortRing = new double[kWindow];
         readonly double[] m_SubmitRing = new double[kWindow];
         readonly double[] m_MainRing = new double[kWindow];
+        readonly double[] m_SortCollectRing = new double[kWindow];
+        readonly double[] m_SortStartRing = new double[kWindow];
+        readonly double[] m_SortWaitRing = new double[kWindow];
+        readonly double[] m_SortAppendRing = new double[kWindow];
         int m_RingIdx;
         int m_RingFill;
         float m_LastLog;
@@ -41,9 +50,13 @@ namespace GsplatLod
             m_SortRec = ProfilerRecorder.StartNew(ProfilerCategory.Render, "GaussianSplatOctree.SortChunks", kWindow);
             m_SubmitRec = ProfilerRecorder.StartNew(ProfilerCategory.Render, "GaussianSplatRenderer.SubmitDraws", kWindow);
             m_MainRec = ProfilerRecorder.StartNew(ProfilerCategory.Internal, "Main Thread", kWindow);
+            m_SortCollectRec = ProfilerRecorder.StartNew(ProfilerCategory.Render, "GaussianSplatOctree.Sort.Collect", kWindow);
+            m_SortStartRec = ProfilerRecorder.StartNew(ProfilerCategory.Render, "GaussianSplatOctree.Sort.Start", kWindow);
+            m_SortWaitRec = ProfilerRecorder.StartNew(ProfilerCategory.Render, "GaussianSplatOctree.Sort.Wait", kWindow);
+            m_SortAppendRec = ProfilerRecorder.StartNew(ProfilerCategory.Render, "GaussianSplatOctree.Sort.Append", kWindow);
             m_CsvPath = System.IO.Path.Combine(Application.persistentDataPath, "gsplat_perf.csv");
             if (alsoWriteCsv && !System.IO.File.Exists(m_CsvPath))
-                System.IO.File.WriteAllText(m_CsvPath, "t_seconds,sort_ms_avg,submit_ms_avg,main_ms_avg,fps_avg\n");
+                System.IO.File.WriteAllText(m_CsvPath, "t_seconds,sort_ms_avg,submit_ms_avg,main_ms_avg,fps_avg,collect_ms,start_ms,wait_ms,append_ms\n");
         }
 
         void OnDisable()
@@ -51,6 +64,10 @@ namespace GsplatLod
             if (m_SortRec.Valid) m_SortRec.Dispose();
             if (m_SubmitRec.Valid) m_SubmitRec.Dispose();
             if (m_MainRec.Valid) m_MainRec.Dispose();
+            if (m_SortCollectRec.Valid) m_SortCollectRec.Dispose();
+            if (m_SortStartRec.Valid) m_SortStartRec.Dispose();
+            if (m_SortWaitRec.Valid) m_SortWaitRec.Dispose();
+            if (m_SortAppendRec.Valid) m_SortAppendRec.Dispose();
         }
 
         void LateUpdate()
@@ -60,6 +77,10 @@ namespace GsplatLod
             m_SortRing[m_RingIdx] = m_SortRec.LastValue * 1e-6;      // ns -> ms
             m_SubmitRing[m_RingIdx] = m_SubmitRec.LastValue * 1e-6;
             m_MainRing[m_RingIdx] = m_MainRec.LastValue * 1e-6;
+            m_SortCollectRing[m_RingIdx] = m_SortCollectRec.LastValue * 1e-6;
+            m_SortStartRing[m_RingIdx] = m_SortStartRec.LastValue * 1e-6;
+            m_SortWaitRing[m_RingIdx] = m_SortWaitRec.LastValue * 1e-6;
+            m_SortAppendRing[m_RingIdx] = m_SortAppendRec.LastValue * 1e-6;
             m_RingIdx = (m_RingIdx + 1) % kWindow;
             if (m_RingFill < kWindow) m_RingFill++;
 
@@ -67,17 +88,26 @@ namespace GsplatLod
             m_LastLog = Time.unscaledTime;
 
             double sortSum = 0, submitSum = 0, mainSum = 0;
+            double collectSum = 0, startSum = 0, waitSum = 0, appendSum = 0;
             for (int i = 0; i < m_RingFill; i++)
             {
                 sortSum += m_SortRing[i]; submitSum += m_SubmitRing[i]; mainSum += m_MainRing[i];
+                collectSum += m_SortCollectRing[i]; startSum += m_SortStartRing[i];
+                waitSum += m_SortWaitRing[i]; appendSum += m_SortAppendRing[i];
             }
             double sortAvg = sortSum / m_RingFill;
             double submitAvg = submitSum / m_RingFill;
             double mainAvg = mainSum / m_RingFill;
+            double collectAvg = collectSum / m_RingFill;
+            double startAvg = startSum / m_RingFill;
+            double waitAvg = waitSum / m_RingFill;
+            double appendAvg = appendSum / m_RingFill;
             double fpsAvg = mainAvg > 0.01 ? 1000.0 / mainAvg : 0;
 
             Debug.Log($"[MarkerRecorder] N={m_RingFill}  sort={sortAvg:F3}ms  submit={submitAvg:F3}ms  " +
                       $"(sort+submit={sortAvg + submitAvg:F3}ms of main={mainAvg:F2}ms  ->  fps~{fpsAvg:F0})");
+            Debug.Log($"[MarkerRecorder-Sort] collect={collectAvg:F3}ms  start={startAvg:F3}ms  wait={waitAvg:F3}ms  append={appendAvg:F3}ms  " +
+                      $"(sum={collectAvg + startAvg + waitAvg + appendAvg:F3}ms vs total sort={sortAvg:F3}ms)");
 
             if (alsoWriteCsv)
             {
@@ -86,7 +116,11 @@ namespace GsplatLod
                 sb.Append(sortAvg.ToString("F4")).Append(',');
                 sb.Append(submitAvg.ToString("F4")).Append(',');
                 sb.Append(mainAvg.ToString("F4")).Append(',');
-                sb.Append(fpsAvg.ToString("F1")).Append('\n');
+                sb.Append(fpsAvg.ToString("F1")).Append(',');
+                sb.Append(collectAvg.ToString("F4")).Append(',');
+                sb.Append(startAvg.ToString("F4")).Append(',');
+                sb.Append(waitAvg.ToString("F4")).Append(',');
+                sb.Append(appendAvg.ToString("F4")).Append('\n');
                 System.IO.File.AppendAllText(m_CsvPath, sb.ToString());
             }
         }

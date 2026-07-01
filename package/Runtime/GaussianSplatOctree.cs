@@ -77,8 +77,35 @@ namespace GaussianSplatting.Runtime
             public int nodeIndex; // Index into m_Nodes instead of copying splat indices
         }
 
+        // Slice 1 / Fix A: static IComparer struct — replaces per-frame delegate lambda in
+        // m_VisibleNodeRefs.Sort. List<T>.Sort dispatches through IComparer<T> for struct comparers
+        // as a devirtualized call, eliminating both the per-frame delegate allocation and the virtual
+        // dispatch overhead on ~60k comparisons that Comparison<T>/Comparer<T>.Create introduced.
+        readonly struct VisibleNodeRefDistanceComparer : IComparer<VisibleNodeRef>
+        {
+            public int Compare(VisibleNodeRef a, VisibleNodeRef b)
+            {
+                // Front-to-back: smallest distance first. Use float.CompareTo to preserve NaN handling.
+                return a.distance.CompareTo(b.distance);
+            }
+        }
+        static readonly VisibleNodeRefDistanceComparer s_VisibleNodeRefDistanceComparer = default;
+
         // Reusable list for visible node references during sorting
         readonly List<VisibleNodeRef> m_VisibleNodeRefs = new();
+
+        // Slice 1 / Fix D: reusable scratch int[] for the append-loop bulk-copy in
+        // SortVisibleSplatsByDepth. Grown geometrically; never shrunk.
+        int[] m_AppendScratch = System.Array.Empty<int>();
+        void EnsureAppendScratch(int required)
+        {
+            if (m_AppendScratch.Length < required)
+            {
+                int newSize = m_AppendScratch.Length == 0 ? 1024 : m_AppendScratch.Length;
+                while (newSize < required) newSize *= 2;
+                m_AppendScratch = new int[newSize];
+            }
+        }
         
         // Reusable stack for non-recursive octree traversal
         readonly Stack<int> m_TraversalStack = new();
@@ -114,6 +141,12 @@ namespace GaussianSplatting.Runtime
         // so we can data-drive P3 (unified buffer refactor) vs alternatives. Zero-alloc, safe in
         // Development + editor + player; picked up by ProfilerRecorder. See RendererMarkerRecorder.
         static readonly ProfilerMarker s_SortMarker = new ProfilerMarker("GaussianSplatOctree.SortChunks");
+        // TEMPORARY sub-markers to split the 8.5ms SortVisibleSplatsByDepth into stages.
+        // Remove once the bottleneck is identified. See RendererMarkerRecorder for readout wiring.
+        static readonly ProfilerMarker s_SortCollectMarker = new ProfilerMarker("GaussianSplatOctree.Sort.Collect");   // (a) traversal + node-ref sort
+        static readonly ProfilerMarker s_SortStartMarker = new ProfilerMarker("GaussianSplatOctree.Sort.Start");       // (b) StartNativeSortJobs or ParallelSortVisibleNodes
+        static readonly ProfilerMarker s_SortWaitMarker = new ProfilerMarker("GaussianSplatOctree.Sort.Wait");         // (c) CollectNativeSortResults or Task.WaitAll
+        static readonly ProfilerMarker s_SortAppendMarker = new ProfilerMarker("GaussianSplatOctree.Sort.Append");     // (d) append into m_VisibleSplatIndices
 
         // Global native positions buffer (all splat positions) to avoid per-job copying
         NativeArray<float3> m_AllPositionsNative;
@@ -943,33 +976,45 @@ namespace GaussianSplatting.Runtime
                 return;
             }
             
+            // TEMP sub-marker (a): visible-node traversal + m_VisibleNodeRefs.Sort
             m_VisibleNodeRefs.Clear();
             var frustumPlanes = GeometryUtility.CalculateFrustumPlanes(camera);
+            s_SortCollectMarker.Begin();
             CollectVisibleNodesWithDistance(0, frustumPlanes, camPosition);
+            // Node-ref sort belongs in (a); it runs on every path.
+            // In the parallel paths below it's kicked off after the workers spawn, but the cost is
+            // the same, and folding it here gives a clean "traversal + node-ref sort" bucket.
+            // (See the second .Sort call below — we skip re-sorting inside the parallel branches.)
+            // Slice 1 / Fix A: static struct comparer replaces per-frame lambda (no delegate alloc, no virtual dispatch)
+            m_VisibleNodeRefs.Sort(s_VisibleNodeRefDistanceComparer);
+            s_SortCollectMarker.End();
 
             if (enableParallelSorting)
             {
                 if (NativeSorting.IsAvailable)
                 {
                     // Use native sorting for supported platforms
-                    // Collect results from any completed jobs and check if all are finished (non-blocking)
+                    // TEMP sub-marker (c): CollectNativeSortResults (non-blocking join of prior frame's jobs)
+                    s_SortWaitMarker.Begin();
                     bool previousNativeJobsCompleted = CollectNativeSortResults();
-                    
-                    // Start new native sort jobs only if previous ones are completed
+                    s_SortWaitMarker.End();
+
+                    // TEMP sub-marker (b): StartNativeSortJobs
                     if (previousNativeJobsCompleted)
                     {
+                        s_SortStartMarker.Begin();
                         int jobsStarted = StartNativeSortJobs(camPosition);
+                        s_SortStartMarker.End();
                         //if (jobsStarted > 0)
                         //    Debug.Log($"Started {jobsStarted} new native sort jobs");
                     }
-                    
-                    // Sort node references by distance while native work happens in background
-                    m_VisibleNodeRefs.Sort((a, b) => a.distance.CompareTo(b.distance)); // Front-to-back
                 }
                 else
                 {
                     // Use Unity Task system for other platforms
                     // Non-blocking check: set a flag indicating whether previous sort tasks have finished.
+                    // TEMP sub-marker (c): probe prior task completion (non-blocking — Task.WaitAll is intentionally not called)
+                    s_SortWaitMarker.Begin();
                     bool previousSortTasksCompleted = true;
                     if (m_SortTasks != null)
                     {
@@ -984,19 +1029,23 @@ namespace GaussianSplatting.Runtime
                             }
                         }
                     }
-                    // Start the new parallel sort workers without blocking.
-                    if(previousSortTasksCompleted)
+                    s_SortWaitMarker.End();
+                    // TEMP sub-marker (b): ParallelSortVisibleNodes spawn cost (Task.Run per node fanout)
+                    if (previousSortTasksCompleted)
+                    {
+                        s_SortStartMarker.Begin();
                         m_SortTasks = ParallelSortVisibleNodes(camPosition);
-                    // Sort node references by distance (near-to-far for front-to-back rendering) while parallel work happens
-                    m_VisibleNodeRefs.Sort((a, b) => a.distance.CompareTo(b.distance)); // Front-to-back
+                        s_SortStartMarker.End();
+                    }
                     // Now join the tasks after doing useful work on main thread (if desired)
                     // JoinParallelSortThreads(m_SortTasks);
                 }
             }
             else
             {
-                // Sequential path: sort nodes first, then process
-                m_VisibleNodeRefs.Sort((a, b) => a.distance.CompareTo(b.distance)); // Front-to-back
+                // Sequential path: node refs already sorted above under (a). Run inline sort now.
+                // TEMP sub-marker (b): sequential sort work is a spawn+run in one step
+                s_SortStartMarker.Begin();
                 // Sequential path: sort outliers (background elements processed last in front-to-back)
                 if (m_OthersIndices.Count > 0)
                 {
@@ -1013,7 +1062,10 @@ namespace GaussianSplatting.Runtime
                         nodesSorted++;
                     }
                 }
+                s_SortStartMarker.End();
             }
+            // TEMP sub-marker (d): append sorted per-node lists into m_VisibleSplatIndices (screen-space LOD stride, budget cap, GraphicsBuffer upload)
+            using var _sortAppendScope = s_SortAppendMarker.Auto();
             // Append nodes in distance order (their lists now internally sorted and persistent)
             int currentIndex = 0;
 
@@ -1059,11 +1111,44 @@ namespace GaussianSplatting.Runtime
                             step = Mathf.Clamp(Mathf.RoundToInt(lodFullPx / Mathf.Max(projPx, 0.01f)), 1, lodMaxStride);
                     }
 
-                    // Copy node splat indices (strided by screen-space LOD)
-                    for (int j = 0; j < node.splatIndices.Count; j += step)
+                    // Slice 1 / Fix D: step==1 bulk-copy fast path.
+                    // Near-view path leaves step at 1 (LOD off, or node projects >= lodFullPx), making the
+                    // per-index List<int> indexer the hot loop over all visible splats. We hoist that path:
+                    // List<int>.CopyTo drops the source into a reusable int[] scratch (native memmove of the
+                    // list's backing), then UnsafeUtility.MemCpy writes it into m_VisibleSplatIndices as one
+                    // memmove. ~10x cheaper than the per-index loop on multi-M splats. Strided LOD path is
+                    // unchanged — it still needs the modulo access.
+                    // Slice 1 / Fix D: step==1 bulk-copy fast path (LOD off, or node projects >= lodFullPx).
+                    // In that case we memcpy the entire List<int> backing into m_VisibleSplatIndices as one
+                    // op instead of iterating the List<T> indexer per splat. Strided LOD path is unchanged —
+                    // an extra List.CopyTo into a scratch int[] was measured to be a net loss (append went
+                    // from 3.5ms to 3.9ms) because the scratch copy costs more than the List-indexer win
+                    // when only a fraction of entries are read. NOTE: in the current NEAR-view scene, LOD is
+                    // on and every node's projected size is below lodFullPx, so step is always > 1 and this
+                    // fast path is dormant. It becomes active in FAR views, wide FOV, or LOD-off configs.
+                    int nodeCount = node.splatIndices.Count;
+                    if (step == 1)
                     {
-                        m_VisibleSplatIndices[currentIndex] = node.splatIndices[j];
-                        currentIndex++;
+                        EnsureAppendScratch(nodeCount);
+                        node.splatIndices.CopyTo(m_AppendScratch, 0);
+                        unsafe
+                        {
+                            fixed (int* srcPtr = m_AppendScratch)
+                            {
+                                int* dstPtr = (int*)NativeArrayUnsafeUtility.GetUnsafePtr(m_VisibleSplatIndices) + currentIndex;
+                                UnsafeUtility.MemCpy(dstPtr, srcPtr, (long)nodeCount * sizeof(int));
+                            }
+                        }
+                        currentIndex += nodeCount;
+                    }
+                    else
+                    {
+                        // Strided LOD path — per-index copy remains correct (and cheaper than scratch+stride).
+                        for (int j = 0; j < nodeCount; j += step)
+                        {
+                            m_VisibleSplatIndices[currentIndex] = node.splatIndices[j];
+                            currentIndex++;
+                        }
                     }
                 }
             }
@@ -1097,6 +1182,7 @@ namespace GaussianSplatting.Runtime
 
             visibleSplatCount = currentIndex;
             UpdateVisibleIndicesBuffer();
+            // (d) closed by _sortAppendScope.Dispose()
         }
 
         // Thread-safe per-node sorting using local scratch arrays (no shared m_DistanceSortArray)
