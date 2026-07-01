@@ -98,7 +98,16 @@ def voxel_merge(d, voxel_size, prune_opacity=0.0, prune_min_scale=0.0,
     cluster_id = np.cumsum(new_seg) - 1  # 0..M-1 per sorted splat
 
     p = pos[order]; s = scl[order]; qq = quat[order]; o = op[order]; c = dc[order]; H = sh[order]
-    w = o.copy()  # weight = opacity
+    # P0(b) SuperSplat-parity: AREA-WEIGHTED moment matching. Weight each splat by (opacity * ellipsoid
+    # surface area) using the Knud-Thomsen ellipsoid area formula with p = 1.6075 (max ~1.061% error).
+    # This matches splat-transform's decimate.ts merge and eliminates the washed-out / over-saturated
+    # coarse-LOD "peacock" artifact that opacity-only weighting causes when tiny opaque splats dominate
+    # the moment average and drown out larger less-opaque splats that carry the visible signal.
+    p_kt = 1.6075
+    sa, sb, sc_ = s[:, 0], s[:, 1], s[:, 2]
+    ab = np.power(sa * sb, p_kt); ac = np.power(sa * sc_, p_kt); bc = np.power(sb * sc_, p_kt)
+    area = np.power((ab + ac + bc) / 3.0, 1.0 / p_kt) * (4.0 * np.pi)   # Knud-Thomsen
+    w = o * area                                                        # weight = opacity * area
     Wc = _segsum(w, seg_starts)                        # [M]
     Wc_safe = np.maximum(Wc, 1e-12)
 
@@ -124,12 +133,16 @@ def voxel_merge(d, voxel_size, prune_opacity=0.0, prune_min_scale=0.0,
     V[dets < 0, :, 0] *= -1.0
     merged_quat = _R_to_quat(V)                            # [M,4] (x,y,z,w)
 
-    # opacity: coverage union 1 - prod(1 - o), in log space (avoids underflow).
-    # op_boost (>1) makes heavily-merged coarse LODs read solid; op_cap avoids hard opaque edges.
-    o_eff = np.clip(o * op_boost, 0.0, 0.999)
-    log1m = np.log(np.clip(1.0 - o_eff, 1e-6, 1.0))
-    merged_op = 1.0 - np.exp(_segsum(log1m, seg_starts))
-    merged_op = np.clip(merged_op, 0.02, op_cap)
+    # P0(b) SuperSplat-parity: MASS-CONSERVING opacity per splat-transform's decimate.ts::momentMatch:
+    #   alpha_merged = min(1, sum(opacity_i * area_i) / area_merged)
+    # This is the correct formulation for a merged splat that represents the union of the constituents'
+    # visual mass. Coverage-union (1 - prod(1-o)) with op_boost inflates alpha and is the root cause of
+    # the coarse-LOD "peacock" washout. area_merged uses the same Knud-Thomsen formula on merged scales.
+    ma, mb, mc_ = merged_scale[:, 0], merged_scale[:, 1], merged_scale[:, 2]
+    m_ab = np.power(ma * mb, p_kt); m_ac = np.power(ma * mc_, p_kt); m_bc = np.power(mb * mc_, p_kt)
+    area_m = np.power((m_ab + m_ac + m_bc) / 3.0, 1.0 / p_kt) * (4.0 * np.pi)
+    mass = _segsum(o * area, seg_starts)                # sum(o_i * area_i) per voxel
+    merged_op = np.clip(mass / np.maximum(area_m, 1e-12), 0.02, op_cap)
 
     # colour + SH: opacity-weighted mean
     merged_dc = _segsum(w[:, None] * c, seg_starts) / Wc_safe[:, None]

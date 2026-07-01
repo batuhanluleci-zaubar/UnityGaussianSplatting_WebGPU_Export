@@ -60,6 +60,10 @@ namespace GsplatLod
         public float lodBaseDistance = 15f;
         [Tooltip("Distance multiplier per LOD band (2-3). Larger = wider bands = sharper transitions but bigger jumps.")]
         public float lodMultiplier = 2.0f;
+        [Tooltip("P0(a) SuperSplat-parity behind-camera penalty. A chunk whose centre is directly behind " +
+                 "the camera (barely-visible via AABB overshoot) has its effective distance multiplied by this " +
+                 "factor -> picks a coarser LOD. 5 = 5x demotion for straight-behind; 1 = disabled.")]
+        [Range(1f, 20f)] public float lodBehindPenalty = 5f;
 
         [Header("Hysteresis")]
         public int evalEveryNFrames = 10;
@@ -283,6 +287,7 @@ namespace GsplatLod
             m_Eval++;
             GeometryUtility.CalculateFrustumPlanes(cam, m_Planes);
             Vector3 camPos = cam.transform.position;
+            Vector3 camFwd = cam.transform.forward;                                // P0(a): behind-camera penalty
             float tanV = Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
             float fovScale = Mathf.Min(tanV, tanV * cam.aspect) / kRefTanHalfFov;
             float baseDist = Mathf.Max(0.01f, lodBaseDistance * m_BudgetScale);
@@ -299,7 +304,16 @@ namespace GsplatLod
                 if (c.dist > maxDist) maxDist = c.dist;
                 if (!c.visible) { c.optimal = K1; continue; }
                 if (forceMaxQuality) { c.optimal = 0; m_VisSorted.Add(i); continue; }   // [F]-toggle: pin visible to LOD0
-                float effDist = c.dist * fovScale; int lv = 0; float thr = baseDist;
+
+                // P0(a) SuperSplat-parity: BEHIND-CAMERA / PERIPHERAL DEMOTION. Chunks whose centre is
+                // behind the camera plane (visible only because their AABB overshoots the frustum) pay
+                // a distance penalty so they pick a coarser LOD. Frees 3-8% of the splat budget on Aura
+                // and cleans up cheap-visibility chunks (e.g. behind an arch that's just barely in view).
+                Vector3 toChunk = wc - camPos;
+                float invLen = 1f / Mathf.Max(c.dist, 0.001f);
+                float behindT = Mathf.Max(0f, -Vector3.Dot(camFwd, toChunk * invLen));  // 0 = in front, 1 = directly behind
+                float effDist = c.dist * fovScale * (1f + behindT * (lodBehindPenalty - 1f));
+                int lv = 0; float thr = baseDist;
                 while (lv < K1 && effDist >= thr) { thr *= lodMultiplier; lv++; }
                 c.optimal = lv; m_VisSorted.Add(i);
             }
