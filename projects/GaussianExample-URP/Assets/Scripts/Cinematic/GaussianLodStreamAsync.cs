@@ -132,13 +132,21 @@ namespace GsplatLod
             }
 
             m_SceneCentre = (mn + mx) * 0.5f; m_SceneRadius = (mx - mn).magnitude * 0.5f;
+            // Auto-tune the LOD bands to the scene scale so we don't render the whole scene at coarsest
+            // just because the user opened the scene with a far camera. lodBaseDistance -> "where LOD steps
+            // from 0->1" needs to be on the same ORDER as the camera-to-content distance for a normally-framed
+            // shot. Rule: base ~= scene radius. For a 25m-radius scene this gives base=25 (previous default
+            // was 15, which pushed most chunks to LOD3/4 from a ~55m auto-framed camera).
+            lodBaseDistance = Mathf.Max(lodBaseDistance, m_SceneRadius * 1.2f);
             if (autoFrameCamera && cam != null)
             {
-                cam.transform.position = transform.TransformPoint(m_SceneCentre + new Vector3(0f, 0.15f * m_SceneRadius, -2.2f * m_SceneRadius));
+                // Pull the camera IN to a normal framing (~1.3 x radius, close enough that near chunks pick
+                // LOD0/1). Old value 2.2 x placed it far outside the natural viewing distance.
+                cam.transform.position = transform.TransformPoint(m_SceneCentre + new Vector3(0f, 0.15f * m_SceneRadius, -1.3f * m_SceneRadius));
                 cam.transform.LookAt(transform.TransformPoint(m_SceneCentre));
                 cam.nearClipPlane = 0.05f; cam.farClipPlane = Mathf.Max(cam.farClipPlane, m_SceneRadius * 12f);
             }
-            Debug.Log($"[StreamAsync] {m_Chunks.Count} chunks, pool={poolN}, budget={deviceBudget} (Addressables async)");
+            Debug.Log($"[StreamAsync] {m_Chunks.Count} chunks, pool={poolN}, budget={deviceBudget}, radius={m_SceneRadius:F1}m, lodBaseDistance={lodBaseDistance:F1}m (Addressables async)");
         }
 
         void Update()
