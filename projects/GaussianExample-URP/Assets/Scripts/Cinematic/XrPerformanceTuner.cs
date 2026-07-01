@@ -39,8 +39,8 @@ namespace GsplatTour
         [Header("Screen-space LOD (dominant lever for big scenes)")]
         [Tooltip("Subsample distant/on-screen-small splats. This cuts the DrawProcedural instance count, the #1 cost for multi-million-splat scenes.")]
         [SerializeField] bool m_EnableScreenLod = true;
-        [Tooltip("Target on-screen splat spacing in pixels. Higher = fewer splats. Mobile tolerates ~4-6.")]
-        [Range(0.5f, 8f)] [SerializeField] float m_LodTargetPixels = 5f;
+        [Tooltip("Full-detail pixel threshold: nodes larger than this on screen stay full detail, smaller ones thin. Lower = more aggressive; mobile ~120-180.")]
+        [Range(20f, 600f)] [SerializeField] float m_LodFullDetailPixels = 150f;
         [Range(1, 64)] [SerializeField] int m_LodMaxStride = 20;
 
         void Start()
@@ -61,7 +61,7 @@ namespace GsplatTour
                 gs.m_OctreeCullingUpdateInterval = Mathf.Max(1, m_CullingUpdateInterval);
                 gs.m_Transparency = m_Transparency;
                 gs.m_EnableScreenLod = m_EnableScreenLod;
-                gs.m_LodTargetPixels = m_LodTargetPixels;
+                gs.m_LodFullDetailPixels = m_LodFullDetailPixels;
                 gs.m_LodMaxStride = m_LodMaxStride;
             }
 

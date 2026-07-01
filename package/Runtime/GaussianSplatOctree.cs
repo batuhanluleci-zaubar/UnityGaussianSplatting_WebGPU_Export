@@ -1015,7 +1015,7 @@ namespace GaussianSplatting.Runtime
             var lodSettings = GaussianSplatSettings.instance;
             bool lodOn = lodSettings != null && lodSettings.m_EnableScreenLod;
             float lodFocalPx = camera.pixelHeight / (2f * Mathf.Tan(camera.fieldOfView * 0.5f * Mathf.Deg2Rad));
-            float lodTargetPx = lodOn ? Mathf.Max(0.5f, lodSettings.m_LodTargetPixels) : 1f;
+            float lodFullPx = lodOn ? Mathf.Max(1f, lodSettings.m_LodFullDetailPixels) : 0f;
             int lodMaxStride = lodOn ? Mathf.Max(1, lodSettings.m_LodMaxStride) : 1;
 
             // First, add node splats (front elements for front-to-back rendering)
@@ -1036,8 +1036,10 @@ namespace GaussianSplatting.Runtime
                         }
                     }
 
-                    // A node covering ~projPx pixels needs ~(projPx/targetPx)^2 splats to look dense; if it
-                    // has more, keep every 'step'-th. Near nodes -> step 1 (full detail); far/small -> up to maxStride.
+                    // Distance-banded LOD: a node LARGER than lodFullPx on screen (near / what you look at) keeps
+                    // EVERY splat (full detail); only nodes SMALLER than that (far / background) are thinned, and the
+                    // smaller they are the more aggressively. This preserves the near image while cutting the
+                    // far-field instance count — unlike a density target, it never thins near content.
                     int step = 1;
                     if (lodOn)
                     {
@@ -1045,9 +1047,8 @@ namespace GaussianSplatting.Runtime
                         Vector3 sz = node.bounds.size;
                         float worldExtent = Mathf.Max(sz.x, Mathf.Max(sz.y, sz.z));
                         float projPx = worldExtent * lodFocalPx / Mathf.Max(dist, 0.001f);
-                        float desired = projPx / lodTargetPx;
-                        desired = desired * desired;
-                        step = Mathf.Clamp(Mathf.RoundToInt(node.splatIndices.Count / Mathf.Max(desired, 1f)), 1, lodMaxStride);
+                        if (projPx < lodFullPx)
+                            step = Mathf.Clamp(Mathf.RoundToInt(lodFullPx / Mathf.Max(projPx, 0.01f)), 1, lodMaxStride);
                     }
 
                     // Copy node splat indices (strided by screen-space LOD)

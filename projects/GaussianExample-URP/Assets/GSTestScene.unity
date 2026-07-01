@@ -1320,6 +1320,9 @@ MonoBehaviour:
   m_EnableOctreeCulling: 1
   m_CullingUpdateInterval: 2
   m_Transparency: 1
+  m_EnableScreenLod: 1
+  m_LodFullDetailPixels: 150
+  m_LodMaxStride: 20
 --- !u!114 &1557083091
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1526,7 +1529,7 @@ MonoBehaviour:
   m_OctreeCullingUpdateInterval: 2
   m_OctreeSplatRatio: 0.95
   m_EnableScreenLod: 1
-  m_LodTargetPixels: 4
+  m_LodFullDetailPixels: 200
   m_LodMaxStride: 16
   m_DrawOctreeGizmos: 1
 --- !u!1 &2129467039

@@ -84,14 +84,16 @@ namespace GaussianSplatting.Runtime
         [Range(0.0f, 1.0f)] public float m_OctreeSplatRatio = 0.9f;
 
         [Header("Screen-space LOD (large scenes)")]
-        [Tooltip("Subsample splats in distant / on-screen-small octree nodes based on their projected pixel size. " +
-                 "Keeps near detail, thins far content — the biggest lever for high-count (multi-million) scenes since " +
-                 "rendering is instance/geometry-bound.")]
+        [Tooltip("Distance-banded level of detail: octree nodes that are LARGE on screen (near / what you look at) " +
+                 "keep FULL detail; only nodes that are SMALL on screen (far / background) are subsampled. This is the " +
+                 "biggest FPS lever for multi-million-splat scenes and preserves the near image.")]
         public bool m_EnableScreenLod = false;
-        [Tooltip("Target on-screen spacing between kept splats, in pixels. Higher = more aggressive LOD (fewer splats).")]
-        [Range(0.5f, 8.0f)] public float m_LodTargetPixels = 2.0f;
-        [Tooltip("Maximum subsample stride for far nodes (caps how sparse distant content can get).")]
-        [Range(1, 64)] public int m_LodMaxStride = 12;
+        [Tooltip("Full-detail threshold in on-screen pixels. Nodes projecting LARGER than this keep every splat; " +
+                 "smaller (farther) nodes are progressively thinned. Higher = more of the scene stays full (better " +
+                 "quality, less speedup). Lower = more aggressive.")]
+        [Range(20f, 600f)] public float m_LodFullDetailPixels = 200f;
+        [Tooltip("Maximum subsample stride for the farthest / smallest nodes (caps how sparse distant content can get).")]
+        [Range(1, 64)] public int m_LodMaxStride = 16;
 
         [Tooltip("Draw octree leaf bounds in the Scene view (OnDrawGizmos)")]
         public bool m_DrawOctreeGizmos = true;

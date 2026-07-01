@@ -105,15 +105,27 @@ instanced quad (2 tris) via `DrawProcedural(instanceCount = visibleCount)`; the 
 culls to ~2.5M but then emits *every* splat in each visible node. So the dominant lever is
 **cutting the visible splat count**.
 
-**Implemented — screen-space LOD (D5, done):** `GaussianSplatOctree.SortVisibleSplatsByDepth`
-now subsamples each visible node by its projected pixel size — near nodes keep all splats, far/
-small nodes keep every N-th (up to `m_LodMaxStride`). Controlled by new `GaussianSplatSettings`
-fields: `m_EnableScreenLod`, `m_LodTargetPixels` (higher = fewer splats), `m_LodMaxStride`.
-`XrPerformanceTuner` enables it under XR. Verified: at 67% fewer splats the Gothic hall is still
-fully intact (splats overlap heavily, so decimation barely shows).
+**Implemented — distance-banded screen-space LOD (D5, done):** `GaussianSplatOctree.SortVisibleSplatsByDepth`
+now applies **near-full / far-coarse** LOD. Each visible node is measured by its projected pixel
+size; nodes **larger than `m_LodFullDetailPixels`** on screen (near / what you look at) keep **every**
+splat, and only nodes **smaller** than that (far / background) are thinned — the smaller, the more.
+Controlled by `GaussianSplatSettings`: `m_EnableScreenLod`, `m_LodFullDetailPixels` (px threshold;
+higher = more of the scene stays full), `m_LodMaxStride`. `XrPerformanceTuner` enables it under XR.
 
-**Tuning:** `m_LodTargetPixels` is the main dial — 2 ≈ subtle (−29%), 4 = balanced default,
-5–6 = aggressive (−67%, still clean). Stack with resolution/foveation for XR.
+> ⚠️ **Design note (learned the hard way):** the first version used a *density target* that thinned
+> splats everywhere — it gutted the near image (blurry). The fix is distance bands that **never touch
+> near content**. A/B at a near in-hall view: LOD-off 1.31M splats vs LOD-on **509K (−61%)** with the
+> two images **visually identical** (near columns / vault / window crisp; only far, redundant splats
+> dropped). This matches SuperSplat's "looks exactly the same" and your brief's near-full/far-coarse rule.
+
+**Tuning:** `m_LodFullDetailPixels` is the dial — higher (~250–400) keeps more of the scene full
+(max quality, less speedup); lower (~100–150) is more aggressive. Default 200 (desktop) / 150 (XR).
+
+**Off-screen culling:** the octree frustum-culls whole nodes, so off-screen content is excluded from
+the instance/tris count (9.7M → ~1.3M in-frustum at a typical view, before LOD). Confirmed.
+
+**More FPS without quality loss (next):** raise octree `m_OctreeMaxDepth` (finer nodes → far content
+thins more granularly), stack resolution/foveation, and offline prune / merged-LOD re-bake.
 
 **Not worth it here (verified traps):** Hi-Z/occlusion (no opaque depth in the transparent pass),
 OIT (use Stochastic), tile rasterizer (Adreno already tiles), VQ/Norm compression (cuts bytes,
