@@ -92,6 +92,12 @@ namespace GsplatLod
         int m_Frame, m_Eval, m_LastEvalFrame = -9999, m_ResidentSplats, m_ResidentChunks, m_VisibleChunks, m_InFlight;
         float m_BudgetScale = 1f;
         Vector3 m_LastCamPos = Vector3.positiveInfinity, m_SceneCentre; float m_SceneRadius;
+
+        // Public accessors for external tools (e.g. SplineAutoFromGsplat that fits a Cinemachine
+        // tour spline around whatever gsplat scene the streamer loaded).
+        public Vector3 SceneCentre => m_SceneCentre;
+        public float SceneRadius => m_SceneRadius;
+        public bool BoundsReady => m_SceneRadius > 0f && m_Chunks.Count > 0;
         readonly Plane[] m_Planes = new Plane[6];
         readonly List<int>[] m_Bucket = new List<int>[kBuckets];
         readonly List<int> m_VisSorted = new List<int>();
