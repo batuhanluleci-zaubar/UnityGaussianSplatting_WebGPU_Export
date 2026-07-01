@@ -82,6 +82,9 @@ def main():
     ap.add_argument("--prune-opacity", type=float, default=0.0, help="prune splats with opacity below this before merging (kills floaters/streaks)")
     ap.add_argument("--prune-min-scale", type=float, default=0.0, help="prune splats whose largest axis scale is below this")
     ap.add_argument("--no-env", dest="env", action="store_false", help="skip the always-resident coarse whole-scene env asset")
+    ap.add_argument("--raw-lod0", action="store_true",
+                    help="LOD0 = RAW splats of the chunk (no merge). Max fidelity when close, matches SuperSplat's "
+                         "top-LOD design. LOD1+ still voxel-merged; --voxel becomes the LOD1 voxel size.")
     ap.set_defaults(env=True)
     args = ap.parse_args()
 
@@ -106,15 +109,27 @@ def main():
         centre = [(a + b) * 0.5 for a, b in zip(bmin, bmax)]
         entry = {"id": cid, "boundMin": bmin, "boundMax": bmax, "centre": centre, "lods": []}
         for lvl in range(args.levels):
-            vox = args.voxel * (args.lod_mult ** lvl)
-            m = voxel_merge(sub, vox, args.prune_opacity, args.prune_min_scale, op_boost=args.op_boost)
-            n1 = m["positions"].shape[0]
-            total_by_lod[lvl] += n1
             fname = f"{scene}_c{cid}_lod{lvl}.ply"
-            write_ply(os.path.join(args.out, fname), m["positions"], m["scales_lin"],
-                      m["quats"], m["opacity"], m["dc"], m["sh"])
-            entry["lods"].append({"level": lvl, "file": fname, "voxel": round(vox, 5), "splatCount": int(n1)})
-            print(f"  c{cid} lod{lvl}: voxel={vox:.4f}  {idx.shape[0]:,} -> {n1:,} splats -> {fname}")
+            if lvl == 0 and args.raw_lod0:
+                # LOD0 = raw chunk splats, optionally floater-pruned. No merge -> pixel-perfect near view.
+                keep = np.ones(sub["positions"].shape[0], bool)
+                if args.prune_opacity > 0: keep &= sub["opacity"] >= args.prune_opacity
+                if args.prune_min_scale > 0: keep &= sub["scales_lin"].max(axis=1) >= args.prune_min_scale
+                raw = {k: (v[keep] if isinstance(v, np.ndarray) and v.ndim >= 1 and v.shape[0] == sub["positions"].shape[0] else v) for k, v in sub.items()}
+                n1 = raw["positions"].shape[0]
+                write_ply(os.path.join(args.out, fname), raw["positions"], raw["scales_lin"],
+                          raw["quats"], raw["opacity"], raw["dc"], raw["sh"])
+                entry["lods"].append({"level": 0, "file": fname, "voxel": 0.0, "splatCount": int(n1)})
+                print(f"  c{cid} lod0 (raw):                 {idx.shape[0]:,} -> {n1:,} splats -> {fname}")
+            else:
+                vox = args.voxel * (args.lod_mult ** max(0, lvl - (1 if args.raw_lod0 else 0)))
+                m = voxel_merge(sub, vox, args.prune_opacity, args.prune_min_scale, op_boost=args.op_boost)
+                n1 = m["positions"].shape[0]
+                write_ply(os.path.join(args.out, fname), m["positions"], m["scales_lin"],
+                          m["quats"], m["opacity"], m["dc"], m["sh"])
+                entry["lods"].append({"level": lvl, "file": fname, "voxel": round(vox, 5), "splatCount": int(n1)})
+                print(f"  c{cid} lod{lvl}: voxel={vox:.4f}  {idx.shape[0]:,} -> {n1:,} splats -> {fname}")
+            total_by_lod[lvl] += n1
         manifest["chunks"].append(entry)
 
     manifest["totalSplatsByLod"] = total_by_lod

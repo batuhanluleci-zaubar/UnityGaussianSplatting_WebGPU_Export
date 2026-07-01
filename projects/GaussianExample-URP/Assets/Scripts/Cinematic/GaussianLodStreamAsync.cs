@@ -24,26 +24,27 @@ namespace GsplatLod
     public class GaussianLodStreamAsync : MonoBehaviour
     {
         [Header("Source")]
-        public string manifestPath = "/Users/devbatuhanluleci/UnityGaussianSplatting_WebGPU_Export/tools/gsplat_lod/out/hq/manifest.json";
+        public string manifestPath = "/Users/devbatuhanluleci/UnityGaussianSplatting_WebGPU_Export/tools/gsplat_lod/out/uhq/manifest.json";
         public Camera cam;
         public bool enableEnv = false;
 
         [Header("Streaming working set")]
-        public int maxResidentChunks = 24;
+        public int maxResidentChunks = 64;
         [Tooltip("Max concurrent async loads in flight (throttles IO / upload spikes).")]
         public int maxConcurrentLoads = 4;
         public int cooldownEvals = 4;
         public bool coarseFirst = true;
 
         [Header("Device budget (resident splats)")]
-        [Tooltip("Desktop generous ~2.5M. Adreno / Android XR ~750K-1M. Drives how much detail the balancer allows resident.")]
-        public int deviceBudget = 2_500_000;
+        [Tooltip("Desktop generous 3-4M with RAW LOD0 (top LOD = original chunk splats, no merge). Adreno / Android XR " +
+                 "~1M. Drives how much detail the balancer allows resident.")]
+        public int deviceBudget = 3_500_000;
 
         [Header("Screen-error LOD bands")]
         [Tooltip("World-distance threshold where LOD steps from 0->1. Larger = more of the scene stays LOD0 (finer). " +
                  "Roughly tune to (max chunk world extent) * 2..3. For ~5-6m chunks (32ch on Festsaal) use ~20-25; for " +
                  "~10m chunks (16ch) use ~12-15. Retune when you re-bake with different --chunks.")]
-        public float lodBaseDistance = 25f;
+        public float lodBaseDistance = 15f;
         [Tooltip("Distance multiplier per LOD band (2-3). Larger = wider bands = sharper transitions but bigger jumps.")]
         public float lodMultiplier = 2.0f;
 

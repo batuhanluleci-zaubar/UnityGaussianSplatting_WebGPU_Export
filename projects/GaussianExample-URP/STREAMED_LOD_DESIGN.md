@@ -63,14 +63,25 @@ Grounded in: `playcanvas/splat-transform` (offline format) + `playcanvas/engine`
   released, no Addressables errors/leaks, 93 FPS. Setup (per bake): the chunk/LOD/env `.asset`s must be
   marked Addressable with address = asset name (one-time editor step; assets are gitignored/regenerable,
   so re-run after re-baking — see the reflection snippet in the M2 commit or automate as a menu item).
-- 🟢 **HQ visual pass** — re-baked at **32 chunks × 4 LOD**, voxel 0.03 (LOD0 now 3.35 M ≈ **35 %** of
-  raw, ~1.8× denser than the 16-chunk bake) + **floater prune** at opacity 0.03. Verified in a clean
-  test scene: near view = 19 chunks all resident at LOD0 (2.14 M splats, 76 FPS); wide view = 24
-  chunks 23×LOD0 + 1×LOD1 (2.49 M, budget-pinned, 43 FPS) — Gothic arches, painted vault, columns,
-  windows all read **crisp**. Retuned defaults: `deviceBudget = 2 500 000`, `lodBaseDistance = 25`,
-  `lodMultiplier = 2` for the 32-chunk bake (rule: `lodBaseDistance ≈ 2–3 × max chunk world extent`).
-  Residual streaks in the source `.spz` (unavoidable outside prune) — chase them with a stronger
-  `--prune-opacity` on the next bake if needed.
+- 🟢 **HQ visual pass** — 32 chunks × 4 LOD, voxel 0.03 (LOD0 merged, ~35 % of raw), prune 0.03. Crisp
+  interior. Verified: near 2.14 M @ 76 FPS, wide 2.49 M @ 43 FPS.
+- 🟢 **UHQ pass — LOD0 = RAW splats** (`--raw-lod0`) + **64 chunks × 5 LOD** + prune 0.05. LOD0 is now
+  the **original unmerged chunk splats** (SuperSplat's top-LOD design; blog parity), so a chunk that
+  hits LOD0 renders exactly as the source .spz for that spatial region — pixel-perfect near. Ladder:
+  **8.92 M / 1.62 M / 519 K / 149 K / 43 K** (LOD0 = 92 % of raw, the rest is prune). Verified: near
+  view = 32 visible chunks with **23×LOD0(raw) + 8×LOD1 + 1×LOD2** = 3.4 M splats @ 44 FPS; wide view
+  = 43 visible with 19×LOD0 + 24×LOD1 = 3.24 M @ 26 FPS (budget balancer degraded far-first). Retuned
+  defaults for 64-chunk bake: `deviceBudget = 3 500 000`, `maxResidentChunks = 64`, `lodBaseDistance
+  = 15` (chunks are ~5 m → base ≈ 2–3 × extent). **Kalan streak'ler capture'ın kendi floater'ları**,
+  daha sert prune (0.08+) daha çok temizler ama gerçek incecik splat'ları da yer.
+- **Debug gizmo not:** octree'nin sarı wireframe leaf kutuları (`GaussianSplatSettings.m_DrawOctreeGizmos`)
+  Scene view'da her seçili slot renderer için çizilir; Game view'da veya bu flag'i `false`'a alarak
+  görüntülenmez — gerçek gsplat çizimini karartmaz.
+- **Neden "100 chunk × 10 LOD" değil?** Her chunk kendi `GaussianSplatRenderer`'ıdır (kendi octree'si,
+  kendi DrawProcedural, kendi sort thread'i). N-renderer overhead doğrusal büyür — 100+ chunk mobil'de
+  baskın CPU maliyeti olur. Daha ince LOD granülaritesinin doğru yeri **her chunk'ın octree'sinin
+  içinde per-leaf LOD** — bunu tek `GaussianSplatRenderer` + tek buffer pool ile yapıyoruz = Phase 2b.
+  UHQ pass (64 chunk × 5 LOD + raw LOD0) bu mimari ile pratikte anlamlı tavan.
 - ⏳ **Phase 2 M3 / 2b** — measure N-renderer overhead on Adreno (32 concurrent DrawProceduals is
   meaningful); XR integration; then (2b) a single GPU **buffer pool + BlockAllocator** with **inline
   colour** (raw-byte, no per-asset colour texture) for one unified draw + sort, replacing the N pooled
