@@ -107,6 +107,14 @@ namespace GaussianSplatting.Runtime
                  "actually debugging octree behaviour.")]
         public bool m_VerboseLog = false;
 
+        [Header("GPU sort (compute)")]
+        [Tooltip("P1 SuperSplat-parity: route the per-chunk sort through DEVICE_RADIX_SORT compute shader " +
+                 "(package/Shaders/Resources/DeviceRadixSort.compute + GpuSorting.cs) instead of the CPU " +
+                 "task-parallel path. Falls back to CPU automatically on platforms that lack compute " +
+                 "(WebGL/WebGPU/GLES) via SystemInfo.supportsComputeShaders. Biggest single FPS lever when " +
+                 "the sort is the CPU bottleneck (typical at >1M resident splats).")]
+        public bool m_UseGpuSort = true;
+
         // Remove the vertex shader mode option since it's now the only mode
         // [Tooltip("Use vertex shader mode for better WebGL compatibility (disables compute shaders and temporal filtering)")]
         // public bool m_UseVertexShaderMode;
@@ -124,6 +132,11 @@ namespace GaussianSplatting.Runtime
         internal Shader shaderDebugBoxes { get; private set; }
         // Compute shader is optional now since we use vertex shader mode
         internal ComputeShader csUtilities { get; private set; }
+        // P1 SuperSplat parity: DEVICE_RADIX_SORT compute shader for the GPU sort path.
+        // Loaded only if the platform supports compute; otherwise the CPU sort path stays live.
+        internal ComputeShader csDeviceRadixSort { get; private set; }
+        // Whether GPU sort is actually usable (compute supported + shader loaded + kernels found)
+        internal bool gpuSortAvailable => m_UseGpuSort && csDeviceRadixSort != null && SystemInfo.supportsComputeShaders;
 
         void Awake()
         {
@@ -145,6 +158,10 @@ namespace GaussianSplatting.Runtime
             shaderDebugBoxes = Resources.Load<Shader>("GaussianDebugRenderBoxes");
             // Do not load compute shader - compute support is intentionally stripped; renderer uses vertex/fragment shaders only
             // csUtilities = Resources.Load<ComputeShader>("GaussianSplatUtilities");
+            // ...except for the DEVICE_RADIX_SORT compute shader which we re-enabled for the GPU sort path.
+            // Guarded by SystemInfo.supportsComputeShaders at instantiation time (see gpuSortAvailable).
+            if (SystemInfo.supportsComputeShaders)
+                csDeviceRadixSort = Resources.Load<ComputeShader>("DeviceRadixSort");
 
             resourcesFound =
                 shaderSplats != null && shaderComposite != null && shaderDebugPoints != null && shaderDebugBoxes != null;

@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: MIT
+// Wrapper .compute for the DeviceRadixSort HLSL restored from git history.
+// The C# host lives in package/Runtime/GpuSorting.cs (ported from b0nes164/GPUSorting).
+// This wrapper simply declares the four kernels and the multi_compile keywords the host
+// enables (KEY_UINT, PAYLOAD_UINT, SHOULD_ASCEND, SORT_PAIRS, VULKAN) and pulls in the
+// algorithm HLSL. See GpuSorting.cs for the dispatch order (Init -> Upsweep -> Scan ->
+// Downsweep, repeated for 4 passes covering 32 bits at 8 bits/pass).
+// Wave intrinsics (WaveActiveBallot, WaveGetLaneIndex) require Shader Model 6.0+.
+// use_dxc opts into the DirectX Shader Compiler which knows how to lower these to
+// Metal SIMD-group intrinsics and Vulkan subgroup ops. Without it Unity uses HLSLcc
+// which cannot translate wave intrinsics -> compile error on Metal / WebGPU / GLES.
+#pragma use_dxc
+#pragma target 6.0
+
+// Exclude renderers that do not support Shader Model 6 compute (WebGPU currently, GLES).
+// Metal (macOS/iOS), Vulkan (Android XR), Direct3D 12 all support wave intrinsics via DXC.
+#pragma exclude_renderers webgpu gles gles3
+
+#pragma kernel InitDeviceRadixSort
+#pragma kernel Upsweep
+#pragma kernel Scan
+#pragma kernel Downsweep
+
+#pragma multi_compile __ KEY_UINT
+#pragma multi_compile __ PAYLOAD_UINT
+#pragma multi_compile __ SHOULD_ASCEND
+#pragma multi_compile __ SORT_PAIRS
+
+// Force the portable getWaveSize() path in SortCommon.hlsl (countbits(WaveActiveBallot(true)))
+// instead of the non-portable WaveGetLaneCount() intrinsic. Metal, WebGPU, and pre-1.6 SPIRV
+// do not support WaveGetLaneCount; forcing the fallback branch works everywhere at ~1 uint4 dot.
+#define VULKAN
+
+#include "DeviceRadixSort.hlsl"

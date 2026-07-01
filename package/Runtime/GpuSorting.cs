@@ -122,10 +122,11 @@ namespace GaussianSplatting.Runtime
             cs.EnableKeyword(m_payloadUintKeyword);
             cs.EnableKeyword(m_ascendKeyword);
             cs.EnableKeyword(m_sortPairKeyword);
-            if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Vulkan)
-                cs.EnableKeyword(m_vulkanKeyword);
-            else
-                cs.DisableKeyword(m_vulkanKeyword);
+            // Force the VULKAN keyword ALWAYS on. In SortCommon.hlsl the VULKAN branch uses a
+            // countbits(WaveActiveBallot(true)) fallback for getWaveSize(); the non-VULKAN branch
+            // uses WaveGetLaneCount() which is not portable to Metal, WebGPU, or older SPIRV. The
+            // fallback costs a single uint4 dot and works everywhere that supports wave intrinsics.
+            cs.EnableKeyword(m_vulkanKeyword);
         }
 
         static uint DivRoundUp(uint x, uint y) => (x + y - 1) / y;

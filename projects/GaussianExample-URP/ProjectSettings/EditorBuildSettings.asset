@@ -9,6 +9,7 @@ EditorBuildSettings:
     path: Assets/GSTestScene.unity
     guid: 36934c1e75cb24745a91b0a1124a3179
   m_configObjects:
+    com.unity.addressableassets: {fileID: 11400000, guid: 23fb1cc4cab1a452e89dd89af14f7194, type: 2}
     com.unity.xr.arfoundation.simulation_settings: {fileID: 11400000, guid: b0bc4304889be4c64a80a6e00b760a55, type: 2}
     com.unity.xr.management.loader_settings: {fileID: 11400000, guid: fd898d7ebda2443649ceb6c4514b9e2f, type: 2}
     com.unity.xr.openxr.settings4: {fileID: 11400000, guid: 1955fb9fbce6e428589b4d0644669af9, type: 2}
