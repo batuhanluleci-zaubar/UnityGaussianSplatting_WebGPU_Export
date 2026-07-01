@@ -125,20 +125,28 @@ v2f vert (uint vtxID : SV_VertexID, uint instID : SV_InstanceID)
     float2 axis1, axis2;
     DecomposeCovariance(cov2d, axis1, axis2);
     
-    // Early discard if splat is smaller than one pixel
+    // Early discard if splat is smaller than one pixel. Threshold raised from 0.5 -> 0.75:
+    // catches more sub-pixel splats that would contribute < 1 pixel of coverage anyway, saving
+    // the SH evaluation + fragment work at zero perceptual cost.
     float splatRadius = max(length(axis1), length(axis2));
-    if (splatRadius < 0.5)
+    if (splatRadius < 0.75)
     {
         o.vertex = asfloat(0x7fc00000); // NaN discards the primitive
         return o;
     }
-    
+
     // Calculate color using spherical harmonics. _WorldSpaceCameraPos is the built-in camera
     // position (per-eye under XR multi-pass) so view-dependent SH is correct for each eye.
     float3 worldViewDir = _WorldSpaceCameraPos.xyz - centerWorldPos;
     float3 objViewDir = mul((float3x3)_MatrixWorldToObject, worldViewDir);
     objViewDir = normalize(objViewDir);
-    half3 col = ShadeSH(splat.sh, objViewDir, _SHOrder, _SHOnly != 0);
+    // Per-splat SH degree gate: small (distant) splats can't visibly benefit from bands 2-3.
+    // ShadeSH short-circuits internally when n < 2/3/4, so lowering n saves ~20-30 float loads
+    // + FMAs per splat. Bandwidth win on Adreno / Android XR.
+    uint effOrder = _SHOrder;
+    if (splatRadius < 4.0) effOrder = min(effOrder, 1u);
+    if (splatRadius < 1.5) effOrder = 0u;
+    half3 col = ShadeSH(splat.sh, objViewDir, effOrder, _SHOnly != 0);
     half opacity = splat.opacity * _SplatOpacityScale;
     
     o.col = half4(col, opacity);

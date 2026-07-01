@@ -295,9 +295,24 @@ namespace GaussianSplatting.Runtime
                 }
             }
 
+            // OPT: cache camera frustum planes once; each per-chunk renderer skips its heavy setup
+            // (mpb.Set* calls, octree traversal, sort trigger) when its asset AABB is fully outside
+            // the frustum. In a streamed multi-chunk scene (64 chunks, ~16 visible), this can save
+            // 40+ per-chunk render setups per frame at ~zero cost.
+            var s_FrustumPlanes = GeometryUtility.CalculateFrustumPlanes(cam);
+
             foreach (var kvp in m_ActiveSplats)
             {
                 var gs = kvp.Item1;
+                {
+                    // World-space AABB from the asset's local bounds transformed by the renderer's transform.
+                    var tr = gs.transform;
+                    var lbMin = gs.asset.boundsMin; var lbMax = gs.asset.boundsMax;
+                    var wc = tr.TransformPoint((lbMin + lbMax) * 0.5f);
+                    var wsize = Vector3.Scale(lbMax - lbMin, tr.lossyScale);
+                    if (!GeometryUtility.TestPlanesAABB(s_FrustumPlanes, new Bounds(wc, wsize)))
+                        continue;
+                }
                 ++gs.m_FrameCounter;
                 var matrix = gs.transform.localToWorldMatrix;
 

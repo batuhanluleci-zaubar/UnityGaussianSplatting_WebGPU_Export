@@ -122,7 +122,18 @@ namespace GsplatLod
             if (cam == null) cam = Camera.main;
             for (int i = 0; i < kBuckets; i++) m_Bucket[i] = new List<int>(32);
             var settings = GaussianSplatSettings.instance;
-            if (settings != null) { settings.m_EnableOctreeCulling = true; settings.m_EnableScreenLod = false; settings.m_LodSplatBudget = 0; }
+            if (settings != null)
+            {
+                settings.m_EnableOctreeCulling = true;
+                // GAP #2 fix: enable per-node LOD stride ON TOP of our per-chunk asset swap. Chunks with
+                // nodes projecting below m_LodFullDetailPixels px get sub-sampled inside the renderer's
+                // own octree. Composes with our screen-error LOD (which picks a whole pre-merged asset)
+                // for a two-level "chunk picks its asset, nodes within stride if far". Keep budget=0 —
+                // our 64-bucket balancer handles totals at chunk granularity.
+                settings.m_EnableScreenLod = true;
+                settings.m_LodFullDetailPixels = 250f;
+                settings.m_LodSplatBudget = 0;
+            }
 
             manifestPath = LodManifestResolver.Resolve(manifestPath, "[StreamAsync]");
             if (manifestPath == null) { enabled = false; return; }
