@@ -35,6 +35,14 @@ namespace GsplatLod
         public int cooldownEvals = 4;
         public bool coarseFirst = true;
 
+        [Header("Demo / diagnostics")]
+        [Tooltip("Slow-motion streaming so the coarse-first -> progressive-refine behavior is visible frame-by-frame. " +
+                 "Forces maxConcurrentLoads=1, evalEveryNFrames to ~30 (1/2 sec at 60fps). Press [R] to reset streaming.")]
+        public bool slowMotionDemo = false;
+        [Tooltip("Press [R] in play mode to reset streaming state (all resident chunks freed, streaming restarts from " +
+                 "coarsest LOD). Useful with slowMotionDemo to watch the progressive refinement.")]
+        public bool resetKeyEnabled = true;
+
         [Header("Device budget (resident splats)")]
         [Tooltip("Desktop generous 3-4M with RAW LOD0 (top LOD = original chunk splats, no merge). Adreno / Android XR " +
                  "~1M. Drives how much detail the balancer allows resident.")]
@@ -153,9 +161,35 @@ namespace GsplatLod
         {
             if (cam == null) { cam = Camera.main; if (cam == null) return; }
             m_Frame++;
+
+            // Reset key: free everything and restart streaming from the coarsest LODs.
+            // Combined with slowMotionDemo, this is how you WATCH the SuperSplat "instant complete
+            // coarse image, then progressive sharpen" behavior — press [R], then over the next few
+            // seconds the resident splat count climbs as chunks refine one level per eval.
+            if (resetKeyEnabled && Input.GetKeyDown(KeyCode.R))
+            {
+                for (int i = 0; i < m_Chunks.Count; i++)
+                {
+                    var c = m_Chunks[i];
+                    if (c.hasPen) { Addressables.Release(c.penH); c.hasPen = false; c.penLevel = -1; }
+                    if (c.hasCur) { Addressables.Release(c.curH); c.hasCur = false; }
+                    if (c.slot >= 0)
+                    {
+                        m_Pool[c.slot].m_Asset = null;
+                        if (m_Pool[c.slot].gameObject.activeSelf) m_Pool[c.slot].gameObject.SetActive(false);
+                        m_SlotChunk[c.slot] = -1;
+                    }
+                    c.slot = -1; c.curLevel = -1; c.lastWantedEval = -9999;
+                }
+                m_ResidentSplats = 0; m_ResidentChunks = 0; m_LastEvalFrame = -9999;
+                m_BudgetScale = 1f;
+                Debug.Log("[StreamAsync] reset — restarting stream from coarsest LODs");
+            }
+
             PollLoads();     // advance in-flight loads every frame (assign when ready)
             bool camMoved = (cam.transform.position - m_LastCamPos).sqrMagnitude > lodUpdateDistance * lodUpdateDistance;
-            if ((m_Frame - m_LastEvalFrame) < Mathf.Max(1, evalEveryNFrames) && !camMoved) return;
+            int evalInterval = slowMotionDemo ? Mathf.Max(evalEveryNFrames, 30) : Mathf.Max(1, evalEveryNFrames);
+            if ((m_Frame - m_LastEvalFrame) < evalInterval && !camMoved) return;
             m_LastEvalFrame = m_Frame; m_LastCamPos = cam.transform.position;
             Evaluate();
         }
@@ -243,12 +277,13 @@ namespace GsplatLod
                 if (ci >= 0 && !wanted.Contains(ci) && (m_Eval - m_Chunks[ci].lastWantedEval) > cooldownEvals) ReleaseSlot(s);
             }
 
+            int concurrentCap = slowMotionDemo ? 1 : maxConcurrentLoads;
             // acquire slots for wanted-not-resident (nearest first); coarse-first load.
             // Gate slot assignment on the load actually starting, so a chunk never gets a slot
             // without a pending load (that would strand it — acquire skips slot>=0, refine needs hasCur).
             for (int k = 0; k < wantCount; k++)
             {
-                if (m_InFlight >= maxConcurrentLoads) break;   // over concurrency cap -> retry next eval
+                if (m_InFlight >= concurrentCap) break;   // over concurrency cap -> retry next eval
                 int i = m_VisSorted[k]; var c = m_Chunks[i];
                 if (c.slot >= 0) continue;
                 int free = FindFreeOrEvictableSlot(i);
@@ -257,7 +292,7 @@ namespace GsplatLod
                 StartLoad(c, coarseFirst ? c.addr.Length - 1 : c.desired); m_InFlight++;
             }
             // refine resident chunks one level toward desired (nearest first, throttled)
-            for (int k = 0; k < m_VisSorted.Count && m_InFlight < maxConcurrentLoads; k++)
+            for (int k = 0; k < m_VisSorted.Count && m_InFlight < concurrentCap; k++)
             {
                 var c = m_Chunks[m_VisSorted[k]];
                 if (c.slot < 0 || !c.hasCur) continue;
@@ -316,8 +351,17 @@ namespace GsplatLod
             var sb = new StringBuilder();
             sb.AppendLine($"GaussianLodStreamAsync (Addressables)  resident={m_ResidentSplats / 1000}K / budget={deviceBudget / 1000}K  slots={m_ResidentChunks}/{maxResidentChunks} of {m_Chunks.Count}  visible={m_VisibleChunks}");
             int pending = 0; foreach (var c in m_Chunks) if (c.hasPen) pending++;
-            sb.Append($"streaming: inFlight(loading)={pending}   budgetScale={m_BudgetScale:F2}   maxConcurrent={maxConcurrentLoads}   cooldown={cooldownEvals}   env={(enableEnv ? m_EnvCount / 1000 + "K" : "off")}");
-            GUI.Label(new Rect(12, 10, 1500, 120), sb.ToString(), style);
+            sb.AppendLine($"streaming: inFlight(loading)={pending}   budgetScale={m_BudgetScale:F2}   env={(enableEnv ? m_EnvCount / 1000 + "K" : "off")}   {(slowMotionDemo ? "SLOW-MO on — press [R] to reset" : "press [R] to reset (see progressive refine)")}");
+
+            // Per-LOD histogram (columns: LOD0 fine .. LODn coarse) — WATCH chunks climb from coarse
+            // to fine as SuperSplat's "progressive refinement" streams in.
+            int maxLod = 0;
+            foreach (var c in m_Chunks) if (c.addr != null && c.addr.Length > maxLod) maxLod = c.addr.Length;
+            var counts = new int[maxLod];
+            foreach (var c in m_Chunks) if (c.hasCur && c.curLevel >= 0 && c.curLevel < maxLod) counts[c.curLevel]++;
+            sb.Append("chunks per LOD:  ");
+            for (int i = 0; i < maxLod; i++) sb.Append($"L{i}={counts[i]}  ");
+            GUI.Label(new Rect(12, 10, 1600, 140), sb.ToString(), style);
         }
     }
 }
