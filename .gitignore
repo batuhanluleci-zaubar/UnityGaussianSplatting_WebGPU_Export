@@ -55,3 +55,6 @@ __pycache__/
 
 # Spike throwaway scene (references gitignored GaussianAssets)
 /projects/**/Assets/SpikeLOD.unity*
+
+# Phase 1 throwaway scene (references gitignored GaussianAssets)
+/projects/**/Assets/Phase1LOD.unity*

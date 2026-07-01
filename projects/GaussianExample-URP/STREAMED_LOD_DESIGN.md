@@ -29,6 +29,23 @@ Grounded in: `playcanvas/splat-transform` (offline format) + `playcanvas/engine`
 
 ---
 
+## Implementation status (2026-07-01)
+
+- ✅ **Spike** (de-risk) — `tools/gsplat_lod/chunk_lod.py` + `StreamedLodProbe.cs`. Proved
+  independent per-chunk LOD + swap-by-screen-error, no seams, colour/SH free.
+- ✅ **Phase 1** — `GaussianLodStreamer.cs` (`GsplatLod` namespace) + `chunk_lod.py --env`.
+  Manifest → 16 chunks × 3 LOD + always-resident env floor; per-chunk screen-error bands
+  (`lodBaseDistance·lodMultiplier^i × fovScale`); frustum cull (off-screen → coarsest, drawn
+  ~free by each renderer's own octree); 64 √-distance-bucket budget balancer (degrade
+  far-first) + `_budgetScale` damper **capped ≤ 1** (screen-error is the quality ceiling; budget
+  only tightens); 10-frame cadence + camera dead-band + LOD dwell hysteresis. **Verified in
+  editor:** near view LOD0=7 / LOD1=3 / LOD2=6, 5 chunks culled off-screen, resident pinned
+  at the 1.2 M budget, 82–86 FPS; wide view all 16 assemble into a seamless hall.
+  Draws N per-chunk `GaussianSplatRenderer`s (fine for ~16–32 chunks).
+- ⏳ **Phase 2** (next, conditional) — single GPU buffer pool + slot allocator + async
+  streaming + eviction, to scale past ~32 chunks and stream scenes whose coarse floor exceeds
+  device RAM. Gate on a measured XR memory-ceiling breach.
+
 ## 1. What SuperSplat "Streamed SOG" actually is
 
 `splat-transform` produces a `lod-meta.json` manifest + a spatial tree of chunks. For each

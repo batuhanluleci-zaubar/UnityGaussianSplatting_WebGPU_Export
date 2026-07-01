@@ -79,6 +79,8 @@ def main():
     ap.add_argument("--voxel", type=float, default=0.05, help="voxel size for LOD0 (each level multiplies by --lod-mult)")
     ap.add_argument("--lod-mult", type=float, default=2.5, help="voxel growth per LOD level")
     ap.add_argument("--op-boost", type=float, default=1.3, help="opacity boost so coarse levels read solid")
+    ap.add_argument("--no-env", dest="env", action="store_false", help="skip the always-resident coarse whole-scene env asset")
+    ap.set_defaults(env=True)
     args = ap.parse_args()
 
     t0 = time.time()
@@ -114,6 +116,21 @@ def main():
         manifest["chunks"].append(entry)
 
     manifest["totalSplatsByLod"] = total_by_lod
+
+    # Always-resident coarse env/background (splat-transform's --lod -1): the whole scene at
+    # one step coarser than the coarsest chunk level, never culled/evicted so the far field is
+    # never empty during streaming (Phase 2) and there is a stable floor image (Phase 1).
+    if args.env:
+        vox_env = args.voxel * (args.lod_mult ** args.levels)
+        me = voxel_merge(d, vox_env, op_boost=max(args.op_boost, 1.4))
+        ne = me["positions"].shape[0]
+        envname = f"{scene}_env.ply"
+        write_ply(os.path.join(args.out, envname), me["positions"], me["scales_lin"],
+                  me["quats"], me["opacity"], me["dc"], me["sh"])
+        manifest["envFile"] = envname
+        manifest["envSplatCount"] = int(ne)
+        print(f"  env: voxel={vox_env:.4f}  {n0:,} -> {ne:,} splats -> {envname}")
+
     with open(os.path.join(args.out, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
     print(f"\nmanifest.json written. total by LOD: {total_by_lod} (full={n0:,})")
