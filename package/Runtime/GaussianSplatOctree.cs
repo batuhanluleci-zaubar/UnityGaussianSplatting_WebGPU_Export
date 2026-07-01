@@ -1009,7 +1009,15 @@ namespace GaussianSplatting.Runtime
             }
             // Append nodes in distance order (their lists now internally sorted and persistent)
             int currentIndex = 0;
-            
+
+            // Screen-space LOD: subsample splats in distant / on-screen-small nodes. This directly cuts
+            // the DrawProcedural instance count, which is the dominant cost for multi-million-splat scenes.
+            var lodSettings = GaussianSplatSettings.instance;
+            bool lodOn = lodSettings != null && lodSettings.m_EnableScreenLod;
+            float lodFocalPx = camera.pixelHeight / (2f * Mathf.Tan(camera.fieldOfView * 0.5f * Mathf.Deg2Rad));
+            float lodTargetPx = lodOn ? Mathf.Max(0.5f, lodSettings.m_LodTargetPixels) : 1f;
+            int lodMaxStride = lodOn ? Mathf.Max(1, lodSettings.m_LodMaxStride) : 1;
+
             // First, add node splats (front elements for front-to-back rendering)
             for (int i = 0; i < m_VisibleNodeRefs.Count; i++)
             {
@@ -1027,13 +1035,27 @@ namespace GaussianSplatting.Runtime
                             return;
                         }
                     }
-                    
-                    // Copy node splat indices
-                    for (int j = 0; j < node.splatIndices.Count; j++)
+
+                    // A node covering ~projPx pixels needs ~(projPx/targetPx)^2 splats to look dense; if it
+                    // has more, keep every 'step'-th. Near nodes -> step 1 (full detail); far/small -> up to maxStride.
+                    int step = 1;
+                    if (lodOn)
                     {
-                        m_VisibleSplatIndices[currentIndex + j] = node.splatIndices[j];
+                        float dist = Vector3.Distance(node.bounds.center, camPosition);
+                        Vector3 sz = node.bounds.size;
+                        float worldExtent = Mathf.Max(sz.x, Mathf.Max(sz.y, sz.z));
+                        float projPx = worldExtent * lodFocalPx / Mathf.Max(dist, 0.001f);
+                        float desired = projPx / lodTargetPx;
+                        desired = desired * desired;
+                        step = Mathf.Clamp(Mathf.RoundToInt(node.splatIndices.Count / Mathf.Max(desired, 1f)), 1, lodMaxStride);
                     }
-                    currentIndex += node.splatIndices.Count;
+
+                    // Copy node splat indices (strided by screen-space LOD)
+                    for (int j = 0; j < node.splatIndices.Count; j += step)
+                    {
+                        m_VisibleSplatIndices[currentIndex] = node.splatIndices[j];
+                        currentIndex++;
+                    }
                 }
             }
             

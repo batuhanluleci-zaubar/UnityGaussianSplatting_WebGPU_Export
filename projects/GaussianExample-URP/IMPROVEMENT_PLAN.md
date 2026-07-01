@@ -88,3 +88,37 @@ Effort: S (hours) · M (1–2 days) · L (week+).
 - `Assets/Scripts/Cinematic/XrSplatPlacer.cs` — AR rescale + place-in-front + recenter.
 - Rebuilt the cinematic orbit around the robust centre (scene), raised camera far clip.
 - (Previous pass) per-eye stereo + `XrPerformanceTuner` + foveation.
+
+---
+
+## PERFORMANCE: profiling + screen-LOD (9.7M "Festsaal 10m" scene)
+
+**Measured on desktop editor (fixed camera), 9.7M-splat asset:**
+| Config | Visible splats | FPS |
+|---|---|---|
+| Baseline (octree frustum cull only) | 2.48M | **15.2** (66 ms) |
+| renderScale 0.6 (fillrate ×0.36) | 2.48M | 19.1 — **only ~10 ms is fillrate** |
+| **Screen-LOD targetPx=5 + renderScale 0.7** | **831K** | **51.1 (19.6 ms) — 3.4×** |
+
+**Diagnosis:** the scene is **instance/geometry-bound, not fillrate-bound**. Each splat is one
+instanced quad (2 tris) via `DrawProcedural(instanceCount = visibleCount)`; the octree frustum-
+culls to ~2.5M but then emits *every* splat in each visible node. So the dominant lever is
+**cutting the visible splat count**.
+
+**Implemented — screen-space LOD (D5, done):** `GaussianSplatOctree.SortVisibleSplatsByDepth`
+now subsamples each visible node by its projected pixel size — near nodes keep all splats, far/
+small nodes keep every N-th (up to `m_LodMaxStride`). Controlled by new `GaussianSplatSettings`
+fields: `m_EnableScreenLod`, `m_LodTargetPixels` (higher = fewer splats), `m_LodMaxStride`.
+`XrPerformanceTuner` enables it under XR. Verified: at 67% fewer splats the Gothic hall is still
+fully intact (splats overlap heavily, so decimation barely shows).
+
+**Tuning:** `m_LodTargetPixels` is the main dial — 2 ≈ subtle (−29%), 4 = balanced default,
+5–6 = aggressive (−67%, still clean). Stack with resolution/foveation for XR.
+
+**Not worth it here (verified traps):** Hi-Z/occlusion (no opaque depth in the transparent pass),
+OIT (use Stochastic), tile rasterizer (Adreno already tiles), VQ/Norm compression (cuts bytes,
+not splat count), faster radix sort (sort is async CPU, off the critical path), the sub-0.5px
+shader discard (fillrate only — runs *after* the vertex/instance cost).
+
+**Bigger offline wins (recommended next):** prune + re-bake the asset (SuperSplat / 3dgsconverter,
+−20–40%), or a merged-LOD hierarchy (merge_lod.py / Hierarchical 3DGS, 2–10×).

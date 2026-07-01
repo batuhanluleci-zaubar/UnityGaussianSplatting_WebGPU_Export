@@ -83,6 +83,16 @@ namespace GaussianSplatting.Runtime
         [Tooltip("Ratio (0-1) of splats considered as 'screen' splats when building the octree. The remainder are treated as background splats(Always draw last in front-to-back alpha blend mode).")]
         [Range(0.0f, 1.0f)] public float m_OctreeSplatRatio = 0.9f;
 
+        [Header("Screen-space LOD (large scenes)")]
+        [Tooltip("Subsample splats in distant / on-screen-small octree nodes based on their projected pixel size. " +
+                 "Keeps near detail, thins far content — the biggest lever for high-count (multi-million) scenes since " +
+                 "rendering is instance/geometry-bound.")]
+        public bool m_EnableScreenLod = false;
+        [Tooltip("Target on-screen spacing between kept splats, in pixels. Higher = more aggressive LOD (fewer splats).")]
+        [Range(0.5f, 8.0f)] public float m_LodTargetPixels = 2.0f;
+        [Tooltip("Maximum subsample stride for far nodes (caps how sparse distant content can get).")]
+        [Range(1, 64)] public int m_LodMaxStride = 12;
+
         [Tooltip("Draw octree leaf bounds in the Scene view (OnDrawGizmos)")]
         public bool m_DrawOctreeGizmos = true;
 
