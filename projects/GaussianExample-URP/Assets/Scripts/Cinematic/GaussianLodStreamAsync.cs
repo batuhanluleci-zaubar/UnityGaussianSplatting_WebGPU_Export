@@ -95,7 +95,8 @@ namespace GsplatLod
             var settings = GaussianSplatSettings.instance;
             if (settings != null) { settings.m_EnableOctreeCulling = true; settings.m_EnableScreenLod = false; settings.m_LodSplatBudget = 0; }
 
-            if (!File.Exists(manifestPath)) { Debug.LogError("[StreamAsync] manifest not found: " + manifestPath); enabled = false; return; }
+            manifestPath = LodManifestResolver.Resolve(manifestPath, "[StreamAsync]");
+            if (manifestPath == null) { enabled = false; return; }
             var man = JsonUtility.FromJson<LodManifest>(File.ReadAllText(manifestPath));
             if (man == null || man.chunks == null) { Debug.LogError("[StreamAsync] manifest parse failed"); enabled = false; return; }
             if (lodMultiplier < 1.05f) lodMultiplier = 1.05f;

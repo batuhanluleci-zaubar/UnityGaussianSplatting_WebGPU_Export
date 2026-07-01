@@ -33,10 +33,48 @@ namespace GsplatLod
     [Serializable] public class LodChunkMeta { public int id; public float[] boundMin; public float[] boundMax; public float[] centre; public LodLevelMeta[] lods; }
     [Serializable] public class LodLevelMeta { public int level; public string file; public float voxel; public int splatCount; }
 
+    // Bakes come and go under tools/gsplat_lod/out/*/manifest.json; scenes save an absolute path
+    // at edit time so a nuked bake breaks the scene silently. This walks the sibling out/ dirs
+    // if the recorded path is missing and returns the first live one, with a clear log.
+    public static class LodManifestResolver
+    {
+        public static string Resolve(string savedPath, string logTag)
+        {
+            if (!string.IsNullOrEmpty(savedPath) && File.Exists(savedPath)) return savedPath;
+            string outDir = null;
+            if (!string.IsNullOrEmpty(savedPath))
+            {
+                // savedPath = ".../out/<name>/manifest.json"  -> outDir = ".../out"
+                var manifestParent = Path.GetDirectoryName(savedPath);           // .../out/<name>
+                if (!string.IsNullOrEmpty(manifestParent)) outDir = Path.GetDirectoryName(manifestParent);
+            }
+            if (string.IsNullOrEmpty(outDir) || !Directory.Exists(outDir))
+            {
+                Debug.LogError($"{logTag} manifest not found: '{savedPath}' and no sibling out/ dir to search.");
+                return null;
+            }
+            // Prefer uhq first (current canonical bake), then streamed, then anything else.
+            string[] prefer = { "uhq", "streamed", "hq", "lod", "spike" };
+            foreach (var name in prefer)
+            {
+                var cand = Path.Combine(outDir, name, "manifest.json");
+                if (File.Exists(cand)) { Debug.LogWarning($"{logTag} recorded manifest missing ('{savedPath}'), FALLBACK to '{cand}'."); return cand; }
+            }
+            foreach (var d in Directory.GetDirectories(outDir))
+            {
+                var cand = Path.Combine(d, "manifest.json");
+                if (File.Exists(cand)) { Debug.LogWarning($"{logTag} recorded manifest missing ('{savedPath}'), FALLBACK to '{cand}'."); return cand; }
+            }
+            var have = string.Join(", ", Directory.GetDirectories(outDir));
+            Debug.LogError($"{logTag} manifest not found: '{savedPath}'. Available out/ subdirs: [{have}] -- none has a manifest.json. Re-bake with tools/gsplat_lod/chunk_lod.py or streamed_sog.py.");
+            return null;
+        }
+    }
+
     public class GaussianLodStreamer : MonoBehaviour
     {
         [Header("Source")]
-        public string manifestPath = "/Users/devbatuhanluleci/UnityGaussianSplatting_WebGPU_Export/tools/gsplat_lod/out/lod/manifest.json";
+        public string manifestPath = "/Users/devbatuhanluleci/UnityGaussianSplatting_WebGPU_Export/tools/gsplat_lod/out/uhq/manifest.json";
         public string assetFolder = "Assets/GaussianAssets";
         public Camera cam;
         public bool enableEnv = true;
@@ -124,7 +162,8 @@ namespace GsplatLod
                 settings.m_LodSplatBudget = 0;
             }
 
-            if (!File.Exists(manifestPath)) { Debug.LogError("[LodStreamer] manifest not found: " + manifestPath); enabled = false; return; }
+            manifestPath = LodManifestResolver.Resolve(manifestPath, "[LodStreamer]");
+            if (manifestPath == null) { enabled = false; return; }
             var man = JsonUtility.FromJson<LodManifest>(File.ReadAllText(manifestPath));
             if (man == null || man.chunks == null) { Debug.LogError("[LodStreamer] manifest parse failed"); enabled = false; return; }
             if (lodMultiplier < 1.05f) lodMultiplier = 1.05f;

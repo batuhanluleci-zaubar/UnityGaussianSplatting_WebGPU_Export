@@ -28,7 +28,7 @@ namespace GsplatLod
     public class GaussianLodStreamManager : MonoBehaviour
     {
         [Header("Source")]
-        public string manifestPath = "/Users/devbatuhanluleci/UnityGaussianSplatting_WebGPU_Export/tools/gsplat_lod/out/lod/manifest.json";
+        public string manifestPath = "/Users/devbatuhanluleci/UnityGaussianSplatting_WebGPU_Export/tools/gsplat_lod/out/uhq/manifest.json";
         public string assetFolder = "Assets/GaussianAssets";
         public Camera cam;
         [Tooltip("Draw the whole-scene coarse env floor. OFF by default: it is a DISTANT-BACKGROUND/skybox concept " +
@@ -123,7 +123,8 @@ namespace GsplatLod
             var settings = GaussianSplatSettings.instance;
             if (settings != null) { settings.m_EnableOctreeCulling = true; settings.m_EnableScreenLod = false; settings.m_LodSplatBudget = 0; }
 
-            if (!File.Exists(manifestPath)) { Debug.LogError("[StreamMgr] manifest not found: " + manifestPath); enabled = false; return; }
+            manifestPath = LodManifestResolver.Resolve(manifestPath, "[StreamMgr]");
+            if (manifestPath == null) { enabled = false; return; }
             var man = JsonUtility.FromJson<LodManifest>(File.ReadAllText(manifestPath));
             if (man == null || man.chunks == null) { Debug.LogError("[StreamMgr] manifest parse failed"); enabled = false; return; }
             if (lodMultiplier < 1.05f) lodMultiplier = 1.05f;
