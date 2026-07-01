@@ -142,9 +142,25 @@ sets it under XR.
 content below it and it starts to haze. To use a finer octree, **also lower `m_LodFullDetailPixels`**
 to compensate. The committed default stays at **depth 5 + fullPx 200 + budget 1.2M** (crisp, ~2.2×).
 
-**Biggest remaining win (offline, quality-preserving):** pre-bake **decimated LOD levels** /
-merged-LOD (SuperSplat "Streamed SOG" / merge_lod.py / Hierarchical 3DGS) so far content is *fewer,
-larger* splats rather than a subsample — that is how SuperSplat streams 24M-Gaussian scenes on phones.
+### ✅ Offline decimated-LOD (biggest win — DONE)
+
+Built `tools/gsplat_lod/`: reads the `.spz`, **merges** clustered splats into fewer/larger gaussians
+(moment matching — mean + parallel-axis covariance → eigh scale/rot, coverage-union opacity, weighted
+SH), and writes a standard 3DGS `.ply` the Unity Creator bakes. **Not a subsample** — same volume, so
+the look is preserved (SuperSplat "Streamed SOG" style).
+
+**Measured (9.7M "Festsaal 10m", heavy orbit view, LOD off, desktop):**
+| Asset | Splats | FPS |
+|---|---|---|
+| original | 9.7M | 15.2 |
+| **merged (voxel 0.05)** | **1.84M (19%)** | **73.0 — 4.8×** |
+
+Verified visually near-identical (columns / painted vault / fresco all intact). This is a plain static
+asset, so the runtime near-full LOD + budget still stack on top. `--voxel` dials the count; `--levels`
+emits a LOD ladder; `--op-boost` keeps coarse levels solid. See `tools/gsplat_lod/README.md`.
+
+**Combine everything:** merged asset (offline, 5×) × runtime near-full LOD + budget (2×) × resolution/
+foveation (XR) → comfortably real-time at full quality.
 
 **Not worth it here (verified traps):** Hi-Z/occlusion (no opaque depth in the transparent pass),
 OIT (use Stochastic), tile rasterizer (Adreno already tiles), VQ/Norm compression (cuts bytes,

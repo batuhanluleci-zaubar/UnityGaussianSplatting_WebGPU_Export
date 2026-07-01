@@ -44,3 +44,11 @@ mono_crash.*.json
 Screenshots/
 /projects/**/Assets/Screenshots/
 /projects/**/Assets/Screenshots.meta
+
+# Generated LOD .ply (big; regenerate with tools/gsplat_lod)
+/tools/gsplat_lod/out/
+*.ply
+
+# Python cache
+__pycache__/
+*.pyc
