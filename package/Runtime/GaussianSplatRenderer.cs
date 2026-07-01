@@ -203,7 +203,13 @@ namespace GaussianSplatting.Runtime
             if (m_ActiveSplats.Count == 0)
                 return false;
 
-            // sort them by order and depth from camera
+            // Sort chunks by camera-space depth of their CONTENT (asset AABB centroid transformed by
+            // the renderer's transform), NOT by transform.position — the streamed-LOD pool holds
+            // dozens of per-chunk renderers all parented to the streamer root at (0,0,0), so
+            // sorting by transform.position was degenerate (every chunk mapped to the same depth
+            // and the render order collapsed to insertion order -> visible inter-chunk popping).
+            // Using the asset centroid gives a real front-to-back walk that composes with the
+            // per-chunk sort inside the octree for correct AlphaBlend layering.
             var camTr = cam.transform;
             m_ActiveSplats.Sort((a, b) =>
             {
@@ -211,10 +217,13 @@ namespace GaussianSplatting.Runtime
                 var orderB = b.Item1.m_RenderOrder;
                 if (orderA != orderB)
                     return orderB.CompareTo(orderA);
-                var trA = a.Item1.transform;
-                var trB = b.Item1.transform;
-                var posA = camTr.InverseTransformPoint(trA.position);
-                var posB = camTr.InverseTransformPoint(trB.position);
+                var gsA = a.Item1; var gsB = b.Item1;
+                var caA = (gsA.asset.boundsMin + gsA.asset.boundsMax) * 0.5f;
+                var caB = (gsB.asset.boundsMin + gsB.asset.boundsMax) * 0.5f;
+                var wcA = gsA.transform.TransformPoint(caA);
+                var wcB = gsB.transform.TransformPoint(caB);
+                var posA = camTr.InverseTransformPoint(wcA);
+                var posB = camTr.InverseTransformPoint(wcB);
                 return posA.z.CompareTo(posB.z);
             });
 
