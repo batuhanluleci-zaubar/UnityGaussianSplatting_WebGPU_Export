@@ -29,11 +29,14 @@ namespace GsplatLod
         public Transform lookAtTarget;
 
         [Header("Orbit shape")]
-        [Range(4, 24)] public int knotCount = 8;
-        [Tooltip("Orbit radius as a multiple of the gsplat SceneRadius (1.2 = comfortable framing outside the content).")]
-        [Range(0.3f, 4f)] public float radiusMultiplier = 1.2f;
-        [Tooltip("Orbit height above SceneCentre.y, as a multiple of SceneRadius. 0 = at centre height, 0.3 = slight elevation.")]
-        [Range(-1f, 1f)] public float heightMultiplier = 0.15f;
+        [Range(4, 24)] public int knotCount = 6;
+        [Tooltip("Orbit radius as a multiple of the gsplat SceneRadius. INTERIOR walk-through: 0.3-0.5 " +
+                 "(orbits inside a hall). OUTSIDE-orbit view: 1.2-1.5. Default 0.35 = walk-through inside.")]
+        [Range(0.1f, 4f)] public float radiusMultiplier = 0.35f;
+        [Tooltip("Orbit height above SceneCentre.y, as a multiple of SceneRadius. Negative pulls the camera " +
+                 "TOWARD the floor of the scene (e.g. -0.08 for eye-level walk-through of a hall). Positive " +
+                 "elevates for aerial/outside orbit.")]
+        [Range(-1f, 1f)] public float heightMultiplier = -0.08f;
         public bool orbitClockwise = true;
         [Tooltip("Regenerate the spline if SceneCentre / SceneRadius change (e.g. streamer swaps manifests mid-run). 0 = only once at start.")]
         [Range(0f, 10f)] public float regenerateInterval = 0f;
