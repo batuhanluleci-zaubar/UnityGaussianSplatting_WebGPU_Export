@@ -61,7 +61,7 @@ def _segsum(values, seg_starts):
 
 
 def voxel_merge(d, voxel_size, prune_opacity=0.0, prune_min_scale=0.0,
-                op_boost=1.0, op_cap=0.999):
+                prune_max_scale=0.0, prune_aspect_ratio=0.0, op_boost=1.0, op_cap=0.999):
     pos = d["positions"].astype(np.float64)
     scl = d["scales_lin"].astype(np.float64)
     quat = d["quats"].astype(np.float64)
@@ -75,6 +75,13 @@ def voxel_merge(d, voxel_size, prune_opacity=0.0, prune_min_scale=0.0,
         keep &= op >= prune_opacity
     if prune_min_scale > 0:
         keep &= scl.max(axis=1) >= prune_min_scale
+    if prune_max_scale > 0:
+        keep &= scl.max(axis=1) <= prune_max_scale  # kills giant-scale floater ellipsoids
+    if prune_aspect_ratio > 0:
+        # kills needle-shaped anisotropic floaters (long thin splats that render as visible streaks).
+        # In noisy captures these are 90 % of the visible "haze": e.g. the Festsaal capture has
+        # median aspect ratio 8.9 but 99 %-ile 2180 — the top few % are extreme needles.
+        keep &= (scl.max(axis=1) / np.maximum(scl.min(axis=1), 1e-6)) <= prune_aspect_ratio
     if not keep.all():
         pos, scl, quat, op, dc, sh = pos[keep], scl[keep], quat[keep], op[keep], dc[keep], sh[keep]
 

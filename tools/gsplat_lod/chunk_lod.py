@@ -79,8 +79,13 @@ def main():
     ap.add_argument("--voxel", type=float, default=0.05, help="voxel size for LOD0 (each level multiplies by --lod-mult)")
     ap.add_argument("--lod-mult", type=float, default=2.5, help="voxel growth per LOD level")
     ap.add_argument("--op-boost", type=float, default=1.3, help="opacity boost so coarse levels read solid")
-    ap.add_argument("--prune-opacity", type=float, default=0.0, help="prune splats with opacity below this before merging (kills floaters/streaks)")
+    ap.add_argument("--prune-opacity", type=float, default=0.0, help="prune splats with opacity below this before merging (kills semi-transparent floaters)")
     ap.add_argument("--prune-min-scale", type=float, default=0.0, help="prune splats whose largest axis scale is below this")
+    ap.add_argument("--prune-max-scale", type=float, default=0.0,
+                    help="prune GIANT-scale floater ellipsoids before merging (e.g. --prune-max-scale 0.3 kills anything > 30cm)")
+    ap.add_argument("--prune-aspect-ratio", type=float, default=0.0,
+                    help="prune NEEDLE-shaped anisotropic floaters (long thin splats -> visible streaks). "
+                         "Try 30 for noisy captures. In Festsaal: median ratio 8.9, 99%%-ile 2180 -> pass 30 kills top few %%.")
     ap.add_argument("--no-env", dest="env", action="store_false", help="skip the always-resident coarse whole-scene env asset")
     ap.add_argument("--raw-lod0", action="store_true",
                     help="LOD0 = RAW splats of the chunk (no merge). Max fidelity when close, matches SuperSplat's "
@@ -115,6 +120,9 @@ def main():
                 keep = np.ones(sub["positions"].shape[0], bool)
                 if args.prune_opacity > 0: keep &= sub["opacity"] >= args.prune_opacity
                 if args.prune_min_scale > 0: keep &= sub["scales_lin"].max(axis=1) >= args.prune_min_scale
+                if args.prune_max_scale > 0: keep &= sub["scales_lin"].max(axis=1) <= args.prune_max_scale
+                if args.prune_aspect_ratio > 0:
+                    keep &= (sub["scales_lin"].max(axis=1) / np.maximum(sub["scales_lin"].min(axis=1), 1e-6)) <= args.prune_aspect_ratio
                 raw = {k: (v[keep] if isinstance(v, np.ndarray) and v.ndim >= 1 and v.shape[0] == sub["positions"].shape[0] else v) for k, v in sub.items()}
                 n1 = raw["positions"].shape[0]
                 write_ply(os.path.join(args.out, fname), raw["positions"], raw["scales_lin"],
@@ -123,7 +131,8 @@ def main():
                 print(f"  c{cid} lod0 (raw):                 {idx.shape[0]:,} -> {n1:,} splats -> {fname}")
             else:
                 vox = args.voxel * (args.lod_mult ** max(0, lvl - (1 if args.raw_lod0 else 0)))
-                m = voxel_merge(sub, vox, args.prune_opacity, args.prune_min_scale, op_boost=args.op_boost)
+                m = voxel_merge(sub, vox, args.prune_opacity, args.prune_min_scale,
+                                args.prune_max_scale, args.prune_aspect_ratio, op_boost=args.op_boost)
                 n1 = m["positions"].shape[0]
                 write_ply(os.path.join(args.out, fname), m["positions"], m["scales_lin"],
                           m["quats"], m["opacity"], m["dc"], m["sh"])
