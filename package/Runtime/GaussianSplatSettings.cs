@@ -102,6 +102,11 @@ namespace GaussianSplatting.Runtime
         [Tooltip("Draw octree leaf bounds in the Scene view (OnDrawGizmos)")]
         public bool m_DrawOctreeGizmos = true;
 
+        [Tooltip("Emit per-chunk / per-octree-build Debug.Log lines. Off by default: with a streaming " +
+                 "LOD system that builds octrees for every chunk this floods the Console. Turn on when " +
+                 "actually debugging octree behaviour.")]
+        public bool m_VerboseLog = false;
+
         // Remove the vertex shader mode option since it's now the only mode
         // [Tooltip("Use vertex shader mode for better WebGL compatibility (disables compute shaders and temporal filtering)")]
         // public bool m_UseVertexShaderMode;

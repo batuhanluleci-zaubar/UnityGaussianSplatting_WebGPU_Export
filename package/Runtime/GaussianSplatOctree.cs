@@ -179,7 +179,7 @@ namespace GaussianSplatting.Runtime
             // Print available system cores (both .NET and Unity reports)
             int envCores = Environment.ProcessorCount;
             int unityCores = SystemInfo.processorCount;
-            Debug.Log($"Available cores - Environment.ProcessorCount: {envCores}, SystemInfo.processorCount: {unityCores} (Might not be accurate on Web platform)");
+            if (GaussianSplatSettings.instance.m_VerboseLog) Debug.Log($"Available cores - Environment.ProcessorCount: {envCores}, SystemInfo.processorCount: {unityCores} (Might not be accurate on Web platform)");
 
             // Check if native threading is supported on current platform
             bool isWebPlatform = Application.platform == RuntimePlatform.WebGLPlayer;
@@ -196,7 +196,7 @@ namespace GaussianSplatting.Runtime
                     parallelSortThreads = nativeWorkerCount;
 
                     string platformName = isWebPlatform ? "WebGL" : "native";
-                    Debug.Log($"GaussianSplatOctree: {platformName} platform — using native threading with {parallelSortThreads} workers");
+                    if (GaussianSplatSettings.instance.m_VerboseLog) Debug.Log($"GaussianSplatOctree: {platformName} platform — using native threading with {parallelSortThreads} workers");
                 }
                 else if (isWebPlatform)
                 {
@@ -214,7 +214,7 @@ namespace GaussianSplatting.Runtime
             
             if(enableParallelSorting)
                 // Inform about the number of threads that will be used for parallel sorting
-                Debug.Log($"GaussianSplatOctree: parallelSortThreads set to {parallelSortThreads}");
+                if (GaussianSplatSettings.instance.m_VerboseLog) Debug.Log($"GaussianSplatOctree: parallelSortThreads set to {parallelSortThreads}");
         }
 
         /// <summary>
@@ -231,7 +231,7 @@ namespace GaussianSplatting.Runtime
                 return;
             }
 
-            Debug.Log($"Building octree with {splatPositions.Length} splats, bounds: {sceneBounds}");
+            if (GaussianSplatSettings.instance.m_VerboseLog) Debug.Log($"Building octree with {splatPositions.Length} splats, bounds: {sceneBounds}");
 
             // Compute center of mass and identify 95% closest splats
             int total = splatPositions.Length;
@@ -378,7 +378,7 @@ namespace GaussianSplatting.Runtime
                 init.Dispose();
             }
 
-            Debug.Log($"Octree build completed: {m_Nodes.Count} total nodes, others={m_OthersIndices.Count}");
+            if (GaussianSplatSettings.instance.m_VerboseLog) Debug.Log($"Octree build completed: {m_Nodes.Count} total nodes, others={m_OthersIndices.Count}");
 
             EnsureVisibleSplatIndicesCapacity(m_TotalSplats);
         }
@@ -499,7 +499,7 @@ namespace GaussianSplatting.Runtime
                     tightenedNodes++;
             }
 
-            Debug.Log($"Octree bounds tightened: {tightenedNodes}/{m_Nodes.Count} nodes updated");
+            if (GaussianSplatSettings.instance.m_VerboseLog) Debug.Log($"Octree bounds tightened: {tightenedNodes}/{m_Nodes.Count} nodes updated");
         }
 
         /// <summary>

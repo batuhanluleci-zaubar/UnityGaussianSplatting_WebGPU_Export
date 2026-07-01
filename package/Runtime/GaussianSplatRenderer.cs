@@ -846,7 +846,7 @@ namespace GaussianSplatting.Runtime
 
             try
             {
-                Debug.Log($"Building octree for {name}: SplatCount={m_SplatCount}, Format={asset.posFormat}");
+                if (settings.m_VerboseLog) Debug.Log($"Building octree for {name}: SplatCount={m_SplatCount}, Format={asset.posFormat}");
                 
                 // Extract splat positions from asset data
                 var splatPositions = ExtractSplatPositions();
@@ -870,7 +870,7 @@ namespace GaussianSplatting.Runtime
                     }
 
                     var bounds = CalculateSplatBounds(worldSplatPositions);
-                    Debug.Log($"Scene bounds for {name} (world-space): {bounds}");
+                    if (settings.m_VerboseLog) Debug.Log($"Scene bounds for {name} (world-space): {bounds}");
 
                     // Initialize and build octree using world-space positions
                     m_Octree ??= new GaussianSplatOctree();
@@ -887,7 +887,7 @@ namespace GaussianSplatting.Runtime
 
                 // Log debug info
                 m_Octree.GetDebugInfo(out int leafNodes, out int maxDepth, out int maxSplatsInLeaf);
-                Debug.Log($"Gaussian Splat Octree built for {name}: {leafNodes} leaf nodes, max depth {maxDepth}, max splats per leaf {maxSplatsInLeaf}");
+                if (settings.m_VerboseLog) Debug.Log($"Gaussian Splat Octree built for {name}: {leafNodes} leaf nodes, max depth {maxDepth}, max splats per leaf {maxSplatsInLeaf}");
                 
             }
             catch (System.Exception e)
@@ -927,8 +927,9 @@ namespace GaussianSplatting.Runtime
                 return new NativeArray<float3>();
             }
             
-            Debug.Log($"Extracting {m_SplatCount} splat positions. Format: {asset.posFormat}, VectorSize: {vectorSize}, " +
-                     $"PosData length: {posData.Length} uints ({posData.Length * 4} bytes)");
+            if (GaussianSplatSettings.instance.m_VerboseLog)
+                Debug.Log($"Extracting {m_SplatCount} splat positions. Format: {asset.posFormat}, VectorSize: {vectorSize}, " +
+                         $"PosData length: {posData.Length} uints ({posData.Length * 4} bytes)");
             
             for (int i = 0; i < m_SplatCount; i++)
             {
