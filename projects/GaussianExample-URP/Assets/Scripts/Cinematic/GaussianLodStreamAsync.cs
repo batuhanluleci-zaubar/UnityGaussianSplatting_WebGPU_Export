@@ -32,6 +32,11 @@ namespace GsplatLod
         public int maxResidentChunks = 64;
         [Tooltip("Max concurrent async loads in flight (throttles IO / upload spikes).")]
         public int maxConcurrentLoads = 4;
+        [Tooltip("Max renderer.m_Asset swaps applied PER FRAME. Each swap triggers the base renderer's " +
+                 "Dispose+Recreate, which racesagainst its background parallel sort workers if too many " +
+                 "happen at once (ArgumentOutOfRangeException spam in the console during a big [F] burst). " +
+                 "Keep low (2-4) — spreading swaps across frames costs nothing perceptually and kills the race.")]
+        [Range(1, 16)] public int maxSwapsPerFrame = 3;
         public int cooldownEvals = 4;
         public bool coarseFirst = true;
 
@@ -222,17 +227,30 @@ namespace GsplatLod
         void PollLoads()
         {
             m_InFlight = 0;
+            // Cap the number of m_Asset SWAPS applied per frame. Each swap triggers the renderer's
+            // Update() -> Dispose+Recreate cycle, which cancels-in-flight and rebuilds the octree.
+            // If a burst (like the [F] toggle promoting dozens of chunks to LOD0 at once) applies
+            // many swaps in one frame, the base octree's parallel sort workers race with the list
+            // rebuild and throw ArgumentOutOfRangeException. Throttling to a small handful per frame
+            // gives each swap a full frame to settle before the next -> no race.
+            int swapsThisFrame = 0;
+            // Same cap regardless of mode — force-mode wants to converge fast but the race with the
+            // background sort worker is proportional to swap rate. A cap of 2-3 gives ~1 s convergence
+            // over 60 fps (plenty fast) and drops the race count to zero in testing.
+            int swapCap = maxSwapsPerFrame;
             for (int i = 0; i < m_Chunks.Count; i++)
             {
                 var c = m_Chunks[i];
                 if (!c.hasPen) continue;
                 if (!c.penH.IsDone) { m_InFlight++; continue; }
+                if (swapsThisFrame >= swapCap) { m_InFlight++; continue; }   // defer this swap to next frame
                 if (c.penH.Status == AsyncOperationStatus.Succeeded && c.slot >= 0)
                 {
                     m_Pool[c.slot].m_Asset = c.penH.Result;
                     if (!m_Pool[c.slot].gameObject.activeSelf) m_Pool[c.slot].gameObject.SetActive(true);
                     if (c.hasCur) Addressables.Release(c.curH);
                     c.curH = c.penH; c.hasCur = true; c.curLevel = c.penLevel;
+                    swapsThisFrame++;
                 }
                 else { Addressables.Release(c.penH); }   // failed, or slot lost while loading
                 c.hasPen = false; c.penLevel = -1;
