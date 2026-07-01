@@ -124,8 +124,27 @@ higher = more of the scene stays full), `m_LodMaxStride`. `XrPerformanceTuner` e
 **Off-screen culling:** the octree frustum-culls whole nodes, so off-screen content is excluded from
 the instance/tris count (9.7M → ~1.3M in-frustum at a typical view, before LOD). Confirmed.
 
-**More FPS without quality loss (next):** raise octree `m_OctreeMaxDepth` (finer nodes → far content
-thins more granularly), stack resolution/foveation, and offline prune / merged-LOD re-bake.
+**Splat budget cap (`m_LodSplatBudget`):** a hard cap on rendered splats. Splats are collected
+front-to-back, so the cap **keeps the nearest and drops the farthest** — a device-tuned budget that
+holds a stable frame time regardless of viewpoint, without touching near content. `XrPerformanceTuner`
+sets it under XR.
+
+**Measured progression (9.7M scene, heavy orbit view, desktop editor):**
+| Config | Visible | FPS |
+|---|---|---|
+| Baseline (frustum cull only) | 2.48M | 15.2 |
+| + near-full LOD (depth 5, fullPx 200) | 1.73M | 26.3 |
+| + budget 1.0M | 1.00M | 33.3 (crisp) ← **default (quality-safe)** |
+| octree maxDepth 7 (finer) | 868K | **55.4** — but **hazier** |
+
+**Octree depth ⚠️ tradeoff:** raising `m_OctreeMaxDepth` (5→7) makes far-thinning much more granular
+(868K / 55 fps) BUT the `fullPx` threshold is node-size-relative, so finer nodes push mid-distance
+content below it and it starts to haze. To use a finer octree, **also lower `m_LodFullDetailPixels`**
+to compensate. The committed default stays at **depth 5 + fullPx 200 + budget 1.2M** (crisp, ~2.2×).
+
+**Biggest remaining win (offline, quality-preserving):** pre-bake **decimated LOD levels** /
+merged-LOD (SuperSplat "Streamed SOG" / merge_lod.py / Hierarchical 3DGS) so far content is *fewer,
+larger* splats rather than a subsample — that is how SuperSplat streams 24M-Gaussian scenes on phones.
 
 **Not worth it here (verified traps):** Hi-Z/occlusion (no opaque depth in the transparent pass),
 OIT (use Stochastic), tile rasterizer (Adreno already tiles), VQ/Norm compression (cuts bytes,

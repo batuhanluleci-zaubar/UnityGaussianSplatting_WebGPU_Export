@@ -42,6 +42,8 @@ namespace GsplatTour
         [Tooltip("Full-detail pixel threshold: nodes larger than this on screen stay full detail, smaller ones thin. Lower = more aggressive; mobile ~120-180.")]
         [Range(20f, 600f)] [SerializeField] float m_LodFullDetailPixels = 150f;
         [Range(1, 64)] [SerializeField] int m_LodMaxStride = 20;
+        [Tooltip("Hard cap on rendered splats on-device (0 = unlimited). Keeps the nearest splats, drops the farthest — set from measured device frame time.")]
+        [Min(0)] [SerializeField] int m_LodSplatBudget = 1200000;
 
         void Start()
         {
@@ -63,6 +65,7 @@ namespace GsplatTour
                 gs.m_EnableScreenLod = m_EnableScreenLod;
                 gs.m_LodFullDetailPixels = m_LodFullDetailPixels;
                 gs.m_LodMaxStride = m_LodMaxStride;
+                gs.m_LodSplatBudget = m_LodSplatBudget;
             }
 
             Debug.Log($"[XrPerformanceTuner] XR={xr} eyeScale={(xr ? m_EyeResolutionScale : 1f)} " +

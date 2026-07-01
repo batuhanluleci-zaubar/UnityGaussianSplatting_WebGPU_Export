@@ -94,6 +94,10 @@ namespace GaussianSplatting.Runtime
         [Range(20f, 600f)] public float m_LodFullDetailPixels = 200f;
         [Tooltip("Maximum subsample stride for the farthest / smallest nodes (caps how sparse distant content can get).")]
         [Range(1, 64)] public int m_LodMaxStride = 16;
+        [Tooltip("Hard cap on rendered splats (0 = unlimited). Splats are collected front-to-back, so the cap keeps " +
+                 "the NEAREST splats and drops the farthest — a device-tuned budget that holds a stable frame time " +
+                 "regardless of viewpoint without touching near content. Derive it from measured device frame time.")]
+        [Min(0)] public int m_LodSplatBudget = 0;
 
         [Tooltip("Draw octree leaf bounds in the Scene view (OnDrawGizmos)")]
         public bool m_DrawOctreeGizmos = true;

@@ -1323,6 +1323,7 @@ MonoBehaviour:
   m_EnableScreenLod: 1
   m_LodFullDetailPixels: 150
   m_LodMaxStride: 20
+  m_LodSplatBudget: 1200000
 --- !u!114 &1557083091
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1531,6 +1532,7 @@ MonoBehaviour:
   m_EnableScreenLod: 1
   m_LodFullDetailPixels: 200
   m_LodMaxStride: 16
+  m_LodSplatBudget: 1200000
   m_DrawOctreeGizmos: 1
 --- !u!1 &2129467039
 GameObject:

@@ -1017,6 +1017,7 @@ namespace GaussianSplatting.Runtime
             float lodFocalPx = camera.pixelHeight / (2f * Mathf.Tan(camera.fieldOfView * 0.5f * Mathf.Deg2Rad));
             float lodFullPx = lodOn ? Mathf.Max(1f, lodSettings.m_LodFullDetailPixels) : 0f;
             int lodMaxStride = lodOn ? Mathf.Max(1, lodSettings.m_LodMaxStride) : 1;
+            int lodBudget = lodOn ? Mathf.Max(0, lodSettings.m_LodSplatBudget) : 0;
 
             // First, add node splats (front elements for front-to-back rendering)
             for (int i = 0; i < m_VisibleNodeRefs.Count; i++)
@@ -1080,7 +1081,13 @@ namespace GaussianSplatting.Runtime
                 }
                 currentIndex += m_OthersIndices.Count;
             }
-            
+
+            // Device-tuned budget: splats were appended front-to-back, so capping the count keeps the
+            // NEAREST splats and drops the farthest — a stable frame time regardless of viewpoint, without
+            // ever thinning near content.
+            if (lodBudget > 0 && currentIndex > lodBudget)
+                currentIndex = lodBudget;
+
             visibleSplatCount = currentIndex;
             UpdateVisibleIndicesBuffer();
         }
