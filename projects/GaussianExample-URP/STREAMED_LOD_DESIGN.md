@@ -63,10 +63,18 @@ Grounded in: `playcanvas/splat-transform` (offline format) + `playcanvas/engine`
   released, no Addressables errors/leaks, 93 FPS. Setup (per bake): the chunk/LOD/env `.asset`s must be
   marked Addressable with address = asset name (one-time editor step; assets are gitignored/regenerable,
   so re-run after re-baking — see the reflection snippet in the M2 commit or automate as a menu item).
-- ⏳ **Phase 2 M3 / 2b** — finer chunking to exercise eviction at scale; measure N-renderer overhead
-  on Adreno; then (2b) a single GPU **buffer pool + BlockAllocator** with **inline colour** (raw-byte,
-  no per-asset colour texture) for one unified draw + sort, replacing the N pooled renderers. Gate the
-  buffer-pool rewrite on measured N-renderer overhead / an XR memory-ceiling breach.
+- 🟢 **HQ visual pass** — re-baked at **32 chunks × 4 LOD**, voxel 0.03 (LOD0 now 3.35 M ≈ **35 %** of
+  raw, ~1.8× denser than the 16-chunk bake) + **floater prune** at opacity 0.03. Verified in a clean
+  test scene: near view = 19 chunks all resident at LOD0 (2.14 M splats, 76 FPS); wide view = 24
+  chunks 23×LOD0 + 1×LOD1 (2.49 M, budget-pinned, 43 FPS) — Gothic arches, painted vault, columns,
+  windows all read **crisp**. Retuned defaults: `deviceBudget = 2 500 000`, `lodBaseDistance = 25`,
+  `lodMultiplier = 2` for the 32-chunk bake (rule: `lodBaseDistance ≈ 2–3 × max chunk world extent`).
+  Residual streaks in the source `.spz` (unavoidable outside prune) — chase them with a stronger
+  `--prune-opacity` on the next bake if needed.
+- ⏳ **Phase 2 M3 / 2b** — measure N-renderer overhead on Adreno (32 concurrent DrawProceduals is
+  meaningful); XR integration; then (2b) a single GPU **buffer pool + BlockAllocator** with **inline
+  colour** (raw-byte, no per-asset colour texture) for one unified draw + sort, replacing the N pooled
+  renderers. Gate the buffer-pool rewrite on measured N-renderer overhead / an XR memory-ceiling breach.
 
 ## 1. What SuperSplat "Streamed SOG" actually is
 

@@ -68,3 +68,6 @@ __pycache__/
 
 # Phase 2 async throwaway scene
 /projects/**/Assets/Phase2Async.unity*
+
+# Phase 2 HQ test scene
+/projects/**/Assets/Phase2HQ.unity*

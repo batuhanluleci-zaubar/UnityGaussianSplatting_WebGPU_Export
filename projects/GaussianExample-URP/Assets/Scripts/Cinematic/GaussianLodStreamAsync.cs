@@ -24,7 +24,7 @@ namespace GsplatLod
     public class GaussianLodStreamAsync : MonoBehaviour
     {
         [Header("Source")]
-        public string manifestPath = "/Users/devbatuhanluleci/UnityGaussianSplatting_WebGPU_Export/tools/gsplat_lod/out/lod/manifest.json";
+        public string manifestPath = "/Users/devbatuhanluleci/UnityGaussianSplatting_WebGPU_Export/tools/gsplat_lod/out/hq/manifest.json";
         public Camera cam;
         public bool enableEnv = false;
 
@@ -36,10 +36,15 @@ namespace GsplatLod
         public bool coarseFirst = true;
 
         [Header("Device budget (resident splats)")]
-        public int deviceBudget = 1_200_000;
+        [Tooltip("Desktop generous ~2.5M. Adreno / Android XR ~750K-1M. Drives how much detail the balancer allows resident.")]
+        public int deviceBudget = 2_500_000;
 
         [Header("Screen-error LOD bands")]
-        public float lodBaseDistance = 14f;
+        [Tooltip("World-distance threshold where LOD steps from 0->1. Larger = more of the scene stays LOD0 (finer). " +
+                 "Roughly tune to (max chunk world extent) * 2..3. For ~5-6m chunks (32ch on Festsaal) use ~20-25; for " +
+                 "~10m chunks (16ch) use ~12-15. Retune when you re-bake with different --chunks.")]
+        public float lodBaseDistance = 25f;
+        [Tooltip("Distance multiplier per LOD band (2-3). Larger = wider bands = sharper transitions but bigger jumps.")]
         public float lodMultiplier = 2.0f;
 
         [Header("Hysteresis")]

@@ -79,6 +79,8 @@ def main():
     ap.add_argument("--voxel", type=float, default=0.05, help="voxel size for LOD0 (each level multiplies by --lod-mult)")
     ap.add_argument("--lod-mult", type=float, default=2.5, help="voxel growth per LOD level")
     ap.add_argument("--op-boost", type=float, default=1.3, help="opacity boost so coarse levels read solid")
+    ap.add_argument("--prune-opacity", type=float, default=0.0, help="prune splats with opacity below this before merging (kills floaters/streaks)")
+    ap.add_argument("--prune-min-scale", type=float, default=0.0, help="prune splats whose largest axis scale is below this")
     ap.add_argument("--no-env", dest="env", action="store_false", help="skip the always-resident coarse whole-scene env asset")
     ap.set_defaults(env=True)
     args = ap.parse_args()
@@ -105,7 +107,7 @@ def main():
         entry = {"id": cid, "boundMin": bmin, "boundMax": bmax, "centre": centre, "lods": []}
         for lvl in range(args.levels):
             vox = args.voxel * (args.lod_mult ** lvl)
-            m = voxel_merge(sub, vox, op_boost=args.op_boost)
+            m = voxel_merge(sub, vox, args.prune_opacity, args.prune_min_scale, op_boost=args.op_boost)
             n1 = m["positions"].shape[0]
             total_by_lod[lvl] += n1
             fname = f"{scene}_c{cid}_lod{lvl}.ply"
