@@ -42,9 +42,22 @@ Grounded in: `playcanvas/splat-transform` (offline format) + `playcanvas/engine`
   editor:** near view LOD0=7 / LOD1=3 / LOD2=6, 5 chunks culled off-screen, resident pinned
   at the 1.2 M budget, 82–86 FPS; wide view all 16 assemble into a seamless hall.
   Draws N per-chunk `GaussianSplatRenderer`s (fine for ~16–32 chunks).
-- ⏳ **Phase 2** (next, conditional) — single GPU buffer pool + slot allocator + async
-  streaming + eviction, to scale past ~32 chunks and stream scenes whose coarse floor exceeds
-  device RAM. Gate on a measured XR memory-ceiling breach.
+- 🟡 **Phase 2 M1 — streaming residency + eviction** (`GaussianLodStreamManager.cs`). A
+  **bounded pool** of reusable renderers (< chunk count): nearest visible chunks acquire a slot
+  (coarse-first → refine one level/eval), off-screen chunks freed after a cooldown → GPU memory
+  bounded independent of total chunk count. **Verified:** wide view 8 slots at coarse (141 K);
+  near view refined to 999 K (coarse→fine), settled; moving evicts off-screen chunks (ids 6,12
+  freed) and streams the new set in. Findings baked into defaults: (1) **pool must be ≥ visible
+  chunk count** or on-screen chunks degrade to env/holes — eviction should free only *off-screen*
+  chunks; (2) **env off by default** — a whole-scene coarse env drawn over an *interior* hazes it
+  (it is a distant-skybox concept; the pool's resident visible chunks already are the coarse
+  floor). Limitation: CPU-side `.asset` objects still load upfront via `AssetDatabase`; the GPU
+  residency (buffers) is what's bounded/streamed. True instant-load = async disk IO next.
+- ⏳ **Phase 2 M2+** — async asset IO (Addressables / raw-byte) for real instant-load; finer
+  chunking to exercise eviction at scale; then (2b) a single GPU **buffer pool + BlockAllocator**
+  with **inline colour** (raw-byte, no per-asset colour texture) for one unified draw + sort,
+  replacing the N pooled renderers. Gate the buffer-pool rewrite on measured N-renderer overhead
+  / an XR memory-ceiling breach.
 
 ## 1. What SuperSplat "Streamed SOG" actually is
 

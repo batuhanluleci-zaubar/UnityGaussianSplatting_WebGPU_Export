@@ -58,3 +58,6 @@ __pycache__/
 
 # Phase 1 throwaway scene (references gitignored GaussianAssets)
 /projects/**/Assets/Phase1LOD.unity*
+
+# Phase 2 throwaway scene (references gitignored GaussianAssets)
+/projects/**/Assets/Phase2LOD.unity*
