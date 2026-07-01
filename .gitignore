@@ -52,3 +52,6 @@ Screenshots/
 # Python cache
 __pycache__/
 *.pyc
+
+# Spike throwaway scene (references gitignored GaussianAssets)
+/projects/**/Assets/SpikeLOD.unity*
