@@ -39,6 +39,20 @@ namespace GaussianSplatting.Runtime
             // Persistent native copy of splat indices for native sorting (read-only input).
             public NativeArray<int> nativeSplatIndices;
             public bool nativeIndicesValid;
+
+            // Slice 3: strided-permutation cache.
+            // splatIndices under LOD is walked as `for(j=0;j<count;j+=step) dst[currentIndex++] = splatIndices[j];`
+            // where step is discrete and bounded to [1, m_LodMaxStride]. The permutation is a pure function of
+            // (splatIndices contents, step), so we cache one NativeArray<int> per (node, step) slot and swap the
+            // per-index copy for a single UnsafeUtility.MemCpy on hit — the same shape as the step==1 fast path
+            // above at L1196-1209. Slot 0 is unused (step is never 0); slot 1 is populated on demand and coexists
+            // with the m_AppendScratch-based step==1 fast path (both are correct — cache path is preferred once warm).
+            // stridedCacheEpoch[step] must equal node.sortEpoch for the slot to be valid; any splatIndices mutation
+            // must call MarkSplatIndicesDirty(this) which bumps sortEpoch and blanket-invalidates all slots.
+            public NativeArray<int>[] stridedCache;    // length = lodMaxStride+1, alloc lazily on first hit
+            public int[] stridedCacheEpoch;            // per-slot epoch; slot valid iff == sortEpoch
+            public int[] stridedCacheLastFrame;        // per-slot last-frame-used for LRU eviction
+            public int sortEpoch;                       // bumped on every splatIndices mutation (see MarkSplatIndicesDirty)
         }
 
         public struct SplatInfo
@@ -151,6 +165,47 @@ namespace GaussianSplatting.Runtime
         // the LockBufferForWrite win separately from the per-node List<int>->NativeArray copy loop.
         static readonly ProfilerMarker s_SortAppendCpuMarker = new ProfilerMarker("GaussianSplatOctree.Sort.AppendCpu");       // (d1) strided List<int> -> NativeArray fill
         static readonly ProfilerMarker s_SortAppendUploadMarker = new ProfilerMarker("GaussianSplatOctree.Sort.AppendUpload"); // (d2) UpdateVisibleIndicesBuffer GPU upload
+
+        // Slice 3: per-frame counters for the strided-copy cache.
+        //
+        // Unity's ProfilerCounter<T> / ProfilerCounterValue<T> API is scattered across package versions;
+        // we take the simplest cross-version approach: static aggregate fields that RendererMarkerRecorder
+        // reads directly for CSV logging. Aggregation is sum across every octree updating in the frame,
+        // which is what we want (the design targets total sort work per frame).
+        //
+        // Reset semantics: the recorder consumes each field once per LateUpdate. To keep the values sane
+        // across many octrees, we snapshot into "public read-out" fields and reset the per-frame
+        // accumulators at each SortVisibleSplats entry (per-octree). Bytes is the sum of live bytes across
+        // all octrees — we recompute it as an atomic add/sub at every alloc/evict/dispose.
+        //
+        // NOTE: these are NOT thread-safe by design — every write happens on the main thread in
+        // SortVisibleSplats / Clear. If that ever changes, wrap in Interlocked.
+        public static int s_LastFrameCacheHits;
+        public static int s_LastFrameCacheMisses;
+        public static int s_LastFrameCacheEvictions;
+        public static long s_LiveCacheBytes;
+
+        // Per-octree per-frame accumulators — reset at top of SortVisibleSplats, folded into the public
+        // static aggregate at end of frame.
+        int m_StridedCacheHitsThisFrame;
+        int m_StridedCacheMissesCountThisFrame;
+        int m_StridedCacheEvictionsThisFrame;
+
+        // Slice 3: cache accounting. m_StridedCacheBytes is the sum of NativeArray<int>.Length*sizeof(int) across
+        // every live slot on every node in THIS octree. Under the global byte budget, cross-node LRU eviction is
+        // driven by node.stridedCacheLastFrame[step] — the oldest-touched slot goes first.
+        long m_StridedCacheBytes;
+        // Public read-only view for tests / verify script. Bytes here is per-octree; the ProfilerCounter aggregates
+        // per-frame across all octrees that update it (last-writer-wins is fine for a diagnostic).
+        public long stridedCacheBytes => m_StridedCacheBytes;
+        // Per-frame miss throttle counter — reset at the top of SortVisibleSplats.
+        int m_StridedCacheMissesThisFrame;
+
+        // Slice 3: cross-node LRU eviction candidate. Walking every node on every eviction is O(N_visible^2); instead
+        // we track the set of nodes that currently own >=1 cached slot and scan that on eviction. Add on populate,
+        // remove on last-slot-freed.
+        readonly List<int> m_StridedCacheOwningNodes = new();
+        readonly HashSet<int> m_StridedCacheOwningSet = new();
 
         // Slice 2 / Rank 4: per-frame frustum-plane cache. GeometryUtility.CalculateFrustumPlanes
         // marshals via P/Invoke AND allocates a new Plane[6] every call — we hit it up to 20 times
@@ -472,6 +527,9 @@ namespace GaussianSplatting.Runtime
                     }
                     node.splatIndices.Add(splatInfos[infoIdx].originalIndex);
                 }
+                // Slice 3: initial fill counts as a mutation — but epoch starts at 0 and cache slots start at
+                // epoch 0 too, so we must bump here or the FIRST populate would false-hit an empty slot.
+                MarkSplatIndicesDirty(node);
 
                 m_Nodes[nodeIndex] = node;
                 return;
@@ -914,6 +972,130 @@ namespace GaussianSplatting.Runtime
             Gizmos.color = prev;
         }
 
+        // Slice 3: single-entry point for invalidating strided-permutation cache.
+        // Any code that mutates node.splatIndices (adds, removes, reorders) MUST call this immediately after.
+        // Bumping sortEpoch invalidates every cache slot for the node in O(1) — the NativeArrays themselves
+        // stay allocated and will be reused on the next populate for that (node, step) pair, so we don't
+        // thrash the allocator when only a re-sort (same-size permutation) happens.
+        //
+        // NOTE ON THREADING: this MUST be called on the main thread only. Parallel sort workers write to
+        // splatIndices off-thread; the epoch bump lives with the main-thread apply step (ApplySortedNodeResults
+        // and the sequential SortNodeSplats path) so that the append loop's read of sortEpoch stays coherent
+        // without needing Volatile/Interlocked. See risk note in the design.
+        static void MarkSplatIndicesDirty(OctreeNode node)
+        {
+            if (node == null) return;
+            // Wrap once every ~2 billion mutations. Even at that limit, existing slot epochs would have to
+            // match the new value exactly to false-hit — vanishingly unlikely, but sub 0 wraparound avoided
+            // by staying in signed positive space is fine (sortEpoch starts at 0, initial epoch entries are 0
+            // in newly-alloc'd int[]s, so the FIRST bump takes us to 1 and initial arrays never false-hit).
+            unchecked { node.sortEpoch++; }
+        }
+
+        // Slice 3: dispose every cached NativeArray on a single node. Called on Clear() and on per-node
+        // teardown. Zero-safe: null and un-created arrays are skipped. Updates m_StridedCacheBytes.
+        void DisposeNodeStridedCache(OctreeNode node)
+        {
+            if (node?.stridedCache == null) return;
+            for (int s = 0; s < node.stridedCache.Length; s++)
+            {
+                var arr = node.stridedCache[s];
+                if (arr.IsCreated)
+                {
+                    m_StridedCacheBytes -= (long)arr.Length * sizeof(int);
+                    try { arr.Dispose(); } catch {}
+                    node.stridedCache[s] = default;
+                }
+                if (node.stridedCacheEpoch != null) node.stridedCacheEpoch[s] = 0;
+                if (node.stridedCacheLastFrame != null) node.stridedCacheLastFrame[s] = 0;
+            }
+            if (m_StridedCacheBytes < 0) m_StridedCacheBytes = 0;
+        }
+
+        // Slice 3: global cross-node LRU. Called when a new allocation would push m_StridedCacheBytes past the
+        // configured budget. Frees whole slots from the least-recently-used owner until we're back under
+        // budget (or we've evicted every non-current-frame slot). Returns true if any bytes freed.
+        bool EvictStridedCacheDownTo(long targetBytes, int currentFrame)
+        {
+            if (m_StridedCacheBytes <= targetBytes) return false;
+            bool anyFreed = false;
+            // Bounded pass: worst-case scan all owning nodes twice. If we can't free below target
+            // (e.g. all slots are from THIS frame and untouchable), we bail — caller falls back.
+            int guard = 0;
+            while (m_StridedCacheBytes > targetBytes && guard++ < 8)
+            {
+                int oldestFrame = int.MaxValue;
+                int oldestNodeIdx = -1;
+                int oldestSlot = -1;
+                long oldestBytes = 0;
+                for (int i = 0; i < m_StridedCacheOwningNodes.Count; i++)
+                {
+                    int ni = m_StridedCacheOwningNodes[i];
+                    if ((uint)ni >= (uint)m_Nodes.Count) continue;
+                    var n = m_Nodes[ni];
+                    if (n?.stridedCache == null) continue;
+                    for (int s = 0; s < n.stridedCache.Length; s++)
+                    {
+                        var arr = n.stridedCache[s];
+                        if (!arr.IsCreated) continue;
+                        int lf = n.stridedCacheLastFrame[s];
+                        // Never evict a slot touched THIS frame — it may still be needed later this frame.
+                        if (lf == currentFrame) continue;
+                        if (lf < oldestFrame)
+                        {
+                            oldestFrame = lf;
+                            oldestNodeIdx = ni;
+                            oldestSlot = s;
+                            oldestBytes = (long)arr.Length * sizeof(int);
+                        }
+                    }
+                }
+                if (oldestNodeIdx < 0) break; // nothing evictable
+                var victim = m_Nodes[oldestNodeIdx];
+                var victimArr = victim.stridedCache[oldestSlot];
+                m_StridedCacheBytes -= oldestBytes;
+                try { victimArr.Dispose(); } catch {}
+                victim.stridedCache[oldestSlot] = default;
+                victim.stridedCacheEpoch[oldestSlot] = 0;
+                victim.stridedCacheLastFrame[oldestSlot] = 0;
+                m_StridedCacheEvictionsThisFrame++;
+                anyFreed = true;
+                // If node has no live slots left, unregister as owner.
+                bool anyLive = false;
+                for (int s = 0; s < victim.stridedCache.Length; s++)
+                    if (victim.stridedCache[s].IsCreated) { anyLive = true; break; }
+                if (!anyLive) StridedCacheUnregisterOwner(oldestNodeIdx);
+            }
+            if (m_StridedCacheBytes < 0) m_StridedCacheBytes = 0;
+            return anyFreed;
+        }
+
+        void StridedCacheRegisterOwner(int nodeIndex)
+        {
+            if (m_StridedCacheOwningSet.Add(nodeIndex))
+                m_StridedCacheOwningNodes.Add(nodeIndex);
+        }
+        void StridedCacheUnregisterOwner(int nodeIndex)
+        {
+            if (m_StridedCacheOwningSet.Remove(nodeIndex))
+                m_StridedCacheOwningNodes.Remove(nodeIndex);
+        }
+
+        // Slice 3: default platform byte budget when m_StridedCacheGlobalByteBudget == 0. Desktop 64 MB,
+        // mobile / XR / WebGL 16 MB — the design note explicitly caps XREAL Aura at 16 MB.
+        static long DefaultStridedCacheByteBudget()
+        {
+            switch (Application.platform)
+            {
+                case RuntimePlatform.Android:
+                case RuntimePlatform.IPhonePlayer:
+                case RuntimePlatform.WebGLPlayer:
+                    return 16L * 1024 * 1024;
+                default:
+                    return 64L * 1024 * 1024;
+            }
+        }
+
         public void Clear()
         {
             // Cleanup native sorting jobs
@@ -927,7 +1109,15 @@ namespace GaussianSplatting.Runtime
                     try { n.nativeSplatIndices.Dispose(); } catch {}
                     n.nativeIndicesValid = false;
                 }
+                // Slice 3: strided-cache teardown per node.
+                DisposeNodeStridedCache(n);
             }
+            m_StridedCacheOwningNodes.Clear();
+            m_StridedCacheOwningSet.Clear();
+            // Publish live-bytes drop to the global aggregate before resetting local counter.
+            s_LiveCacheBytes -= m_StridedCacheBytes;
+            if (s_LiveCacheBytes < 0) s_LiveCacheBytes = 0;
+            m_StridedCacheBytes = 0;
             if (m_OthersNativeValid && m_OthersNativeIndices.IsCreated)
             {
                 try { m_OthersNativeIndices.Dispose(); } catch {}
@@ -1141,6 +1331,24 @@ namespace GaussianSplatting.Runtime
             int lodMaxStride = lodOn ? Mathf.Max(1, lodSettings.m_LodMaxStride) : 1;
             int lodBudget = lodOn ? Mathf.Max(0, lodSettings.m_LodSplatBudget) : 0;
 
+            // Slice 3: strided-cache config for this frame. Cache is only useful for the strided (step>1) path;
+            // step==1 already MemCpys. Byte budget is per-octree; when the visible set churns we lean on LRU.
+            bool cacheOn = lodOn && lodSettings != null && lodSettings.m_EnableStridedCache;
+            int cacheSlotsPerNode = cacheOn ? Mathf.Max(1, lodSettings.m_StridedCacheSlotsPerNode) : 0;
+            long cacheByteBudget = 0;
+            if (cacheOn)
+            {
+                cacheByteBudget = lodSettings.m_StridedCacheGlobalByteBudget > 0
+                    ? lodSettings.m_StridedCacheGlobalByteBudget
+                    : DefaultStridedCacheByteBudget();
+            }
+            int cacheMaxMissesPerFrame = cacheOn ? Mathf.Max(1, lodSettings.m_StridedCacheMaxMissesPerFrame) : 0;
+            m_StridedCacheMissesThisFrame = 0;
+            m_StridedCacheHitsThisFrame = 0;
+            m_StridedCacheMissesCountThisFrame = 0;
+            m_StridedCacheEvictionsThisFrame = 0;
+            int currentFrame = Time.frameCount;
+
             // First, add node splats (front elements for front-to-back rendering)
             for (int i = 0; i < m_VisibleNodeRefs.Count; i++)
             {
@@ -1209,11 +1417,169 @@ namespace GaussianSplatting.Runtime
                     }
                     else
                     {
-                        // Strided LOD path — per-index copy remains correct (and cheaper than scratch+stride).
-                        for (int j = 0; j < nodeCount; j += step)
+                        // Slice 3: strided-cache read/populate path.
+                        //
+                        // The strided per-index loop below is the hot path today (Sort.AppendCpu = 3.19 ms).
+                        // We cache the strided permutation per (node, step) so warm frames hit a single
+                        // UnsafeUtility.MemCpy — the same shape as the step==1 fast path above.
+                        //
+                        // Cache validity: node.stridedCacheEpoch[step] must equal node.sortEpoch. Every
+                        // splatIndices mutation site calls MarkSplatIndicesDirty(node) (or Interlocked.Increment
+                        // on the parallel path) which bumps sortEpoch, blanket-invalidating every slot for the
+                        // node. Camera motion does NOT invalidate — the strided permutation is a pure function
+                        // of (splatIndices contents, step). When the angular threshold triggers a re-sort, that
+                        // path bumps sortEpoch and we correctly miss.
+                        //
+                        // Fallback on miss: same strided loop as before, run in "populate mode" — writing to
+                        // BOTH the destination NativeArray AND the cache slot in one pass so the miss frame
+                        // is only marginally slower than status quo (one extra store per index).
+                        //
+                        // Throttle: at most m_StridedCacheMaxMissesPerFrame allocations per frame. Excess misses
+                        // fall through to the un-cached loop and try again next frame.
+                        int strideCount = (nodeCount + step - 1) / step; // ceil(nodeCount / step)
+                        bool didCacheCopy = false;
+
+                        // Slice 3: MemCpy has meaningful per-call overhead (dozens of ns for tiny copies).
+                        // Below this threshold the un-cached indexer loop beats cache-hit MemCpy in wall time,
+                        // AND the cache pays alloc + bookkeeping cost. Empirically discovered on Phase2HQ:
+                        // scene uses m_OctreeMaxSplatsPerLeaf=1, so most nodes hit strideCount == 1 and the
+                        // cache was a 2x net LOSS (Sort 7.6 -> 10.6 ms). Skip cache for these micro nodes and
+                        // fall through to the same tight loop as before.
+                        const int kStrideCountCacheFloor = 32;
+                        if (cacheOn && strideCount >= kStrideCountCacheFloor && (uint)step < (uint)(lodMaxStride + 1))
                         {
-                            m_VisibleSplatIndices[currentIndex] = node.splatIndices[j];
-                            currentIndex++;
+                            // Lazily allocate the per-node slot arrays. Length = lodMaxStride + 1 so we can
+                            // index by step directly (slot 0 unused).
+                            if (node.stridedCache == null || node.stridedCache.Length != lodMaxStride + 1)
+                            {
+                                // If lodMaxStride was resized at runtime, drop the old arrays entirely.
+                                if (node.stridedCache != null)
+                                {
+                                    DisposeNodeStridedCache(node);
+                                }
+                                node.stridedCache = new NativeArray<int>[lodMaxStride + 1];
+                                node.stridedCacheEpoch = new int[lodMaxStride + 1];
+                                node.stridedCacheLastFrame = new int[lodMaxStride + 1];
+                            }
+
+                            var slot = node.stridedCache[step];
+                            // HIT: slot allocated, epoch matches current sortEpoch, and length matches.
+                            // Length check catches the rare case of a node whose splatIndices count changed
+                            // (e.g. rebuild reused the OctreeNode reference) without going through MarkSplatIndicesDirty.
+                            if (slot.IsCreated
+                                && node.stridedCacheEpoch[step] == node.sortEpoch
+                                && slot.Length == strideCount)
+                            {
+                                unsafe
+                                {
+                                    int* dstPtr = (int*)NativeArrayUnsafeUtility.GetUnsafePtr(m_VisibleSplatIndices) + currentIndex;
+                                    int* srcPtr = (int*)NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(slot);
+                                    UnsafeUtility.MemCpy(dstPtr, srcPtr, (long)strideCount * sizeof(int));
+                                }
+                                currentIndex += strideCount;
+                                node.stridedCacheLastFrame[step] = currentFrame;
+                                m_StridedCacheHitsThisFrame++;
+                                didCacheCopy = true;
+                            }
+                            else if (m_StridedCacheMissesThisFrame < cacheMaxMissesPerFrame)
+                            {
+                                // MISS: try to allocate the slot.
+                                // (1) If slot exists but is stale (epoch mismatch OR length mismatch), free it first.
+                                if (slot.IsCreated)
+                                {
+                                    m_StridedCacheBytes -= (long)slot.Length * sizeof(int);
+                                    try { slot.Dispose(); } catch {}
+                                    node.stridedCache[step] = default;
+                                    node.stridedCacheEpoch[step] = 0;
+                                    node.stridedCacheLastFrame[step] = 0;
+                                }
+
+                                // (2) Enforce per-node K-slots LRU. If already at K live slots for this node,
+                                //     free the oldest one.
+                                int liveSlots = 0;
+                                int lruStep = -1;
+                                int lruFrame = int.MaxValue;
+                                for (int s = 1; s < node.stridedCache.Length; s++)
+                                {
+                                    if (!node.stridedCache[s].IsCreated) continue;
+                                    liveSlots++;
+                                    if (node.stridedCacheLastFrame[s] < lruFrame)
+                                    {
+                                        lruFrame = node.stridedCacheLastFrame[s];
+                                        lruStep = s;
+                                    }
+                                }
+                                if (liveSlots >= cacheSlotsPerNode && lruStep > 0 && lruStep != step)
+                                {
+                                    var lruSlot = node.stridedCache[lruStep];
+                                    m_StridedCacheBytes -= (long)lruSlot.Length * sizeof(int);
+                                    try { lruSlot.Dispose(); } catch {}
+                                    node.stridedCache[lruStep] = default;
+                                    node.stridedCacheEpoch[lruStep] = 0;
+                                    node.stridedCacheLastFrame[lruStep] = 0;
+                                    m_StridedCacheEvictionsThisFrame++;
+                                }
+
+                                // (3) Enforce global byte budget by cross-node LRU eviction.
+                                long allocBytes = (long)strideCount * sizeof(int);
+                                if (cacheByteBudget > 0 && m_StridedCacheBytes + allocBytes > cacheByteBudget)
+                                {
+                                    EvictStridedCacheDownTo(cacheByteBudget - allocBytes, currentFrame);
+                                }
+
+                                // (4) Allocate + populate in one pass — write to BOTH destination and cache.
+                                //     If allocation fails (OOM), fall through to the un-cached loop.
+                                bool allocOk = false;
+                                if (cacheByteBudget == 0 || m_StridedCacheBytes + allocBytes <= cacheByteBudget)
+                                {
+                                    try
+                                    {
+                                        var newSlot = new NativeArray<int>(strideCount, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                                        unsafe
+                                        {
+                                            int* dstPtr = (int*)NativeArrayUnsafeUtility.GetUnsafePtr(m_VisibleSplatIndices) + currentIndex;
+                                            int* cachePtr = (int*)NativeArrayUnsafeUtility.GetUnsafePtr(newSlot);
+                                            int written = 0;
+                                            for (int j = 0; j < nodeCount; j += step)
+                                            {
+                                                int v = node.splatIndices[j];
+                                                dstPtr[written] = v;
+                                                cachePtr[written] = v;
+                                                written++;
+                                            }
+                                        }
+                                        node.stridedCache[step] = newSlot;
+                                        node.stridedCacheEpoch[step] = node.sortEpoch;
+                                        node.stridedCacheLastFrame[step] = currentFrame;
+                                        m_StridedCacheBytes += allocBytes;
+                                        StridedCacheRegisterOwner(nodeRef.nodeIndex);
+                                        currentIndex += strideCount;
+                                        m_StridedCacheMissesThisFrame++;
+                                        m_StridedCacheMissesCountThisFrame++;
+                                        allocOk = true;
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Debug.LogWarning($"Slice 3: strided-cache alloc failed: {ex.Message}");
+                                    }
+                                }
+                                didCacheCopy = allocOk;
+                            }
+                            else
+                            {
+                                // Throttled miss — count it but fall through to the un-cached loop.
+                                m_StridedCacheMissesCountThisFrame++;
+                            }
+                        }
+
+                        if (!didCacheCopy)
+                        {
+                            // Strided LOD path — per-index copy remains correct (and cheaper than scratch+stride).
+                            for (int j = 0; j < nodeCount; j += step)
+                            {
+                                m_VisibleSplatIndices[currentIndex] = node.splatIndices[j];
+                                currentIndex++;
+                            }
                         }
                     }
                 }
@@ -1250,6 +1616,17 @@ namespace GaussianSplatting.Runtime
                 currentIndex = lodBudget;
 
             visibleSplatCount = currentIndex;
+            // Slice 3: publish per-frame cache counters as global aggregates for RendererMarkerRecorder.
+            // NOTE: multiple octrees updating in the same frame will each ADD to the aggregate — this is
+            // intentional so CSV sees total-work-per-frame. The recorder is responsible for resetting
+            // between reads if it wants per-octree numbers.
+            s_LastFrameCacheHits = m_StridedCacheHitsThisFrame;
+            s_LastFrameCacheMisses = m_StridedCacheMissesCountThisFrame;
+            s_LastFrameCacheEvictions = m_StridedCacheEvictionsThisFrame;
+            // s_LiveCacheBytes stays authoritative — it's kept in sync at every alloc/evict/dispose site
+            // (see delta arithmetic below). We simply mirror this octree's contribution here for consumers
+            // that want a fresh cross-octree read after this octree's append.
+            s_LiveCacheBytes = m_StridedCacheBytes;
             // Slice 2 / Rank 1: close CPU sub-marker, then measure GPU upload separately.
             s_SortAppendCpuMarker.End();
             s_SortAppendUploadMarker.Begin();
@@ -1412,6 +1789,9 @@ namespace GaussianSplatting.Runtime
                             SortSplatsInNodeThreadSafe(node.splatIndices, camPosition);
                             node.isSorted = true;
                             node.lastSortCameraPosition = camPosition;
+                            // Slice 3: off-thread epoch bump — Interlocked so the main-thread append loop
+                            // reads a coherent (post-mutation) value.
+                            Interlocked.Increment(ref node.sortEpoch);
                         }
                     });
                 }
@@ -1466,6 +1846,8 @@ namespace GaussianSplatting.Runtime
                             SortSplatsInNodeThreadSafe(node.splatIndices, camPosition);
                             node.isSorted = true;
                             node.lastSortCameraPosition = camPosition;
+                            // Slice 3: off-thread epoch bump — Interlocked so main-thread read is coherent.
+                            Interlocked.Increment(ref node.sortEpoch);
                         }
                     }
                     catch (Exception ex)
@@ -1483,6 +1865,8 @@ namespace GaussianSplatting.Runtime
                                 SortSplatsInNode(node.splatIndices, camPosition);
                                 node.isSorted = true;
                                 node.lastSortCameraPosition = camPosition;
+                                // Slice 3: fallback path — same off-thread epoch bump.
+                                Interlocked.Increment(ref node.sortEpoch);
                             }
                             catch (Exception fallbackEx)
                             {
@@ -1736,6 +2120,9 @@ namespace GaussianSplatting.Runtime
             // Removed optional native indices refresh
             node.isSorted = true;
             node.lastSortCameraPosition = camPosition;
+            // Slice 3: native-sort apply is main-thread — bump epoch AFTER the swap completes so the
+            // append loop's read of sortEpoch is coherent without needing Volatile/Interlocked.
+            MarkSplatIndicesDirty(node);
         }
 
         /// <summary>
@@ -1779,6 +2166,8 @@ namespace GaussianSplatting.Runtime
             SortSplatsInNode(node.splatIndices, camPosition);
             node.isSorted = true;
             node.lastSortCameraPosition = camPosition;
+            // Slice 3: sequential path is main-thread — bump epoch after mutation.
+            MarkSplatIndicesDirty(node);
             return true;
         }
 

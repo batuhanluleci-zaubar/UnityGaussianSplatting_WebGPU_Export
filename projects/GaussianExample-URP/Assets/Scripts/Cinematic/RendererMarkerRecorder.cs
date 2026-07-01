@@ -36,6 +36,10 @@ namespace GsplatLod
         // Slice 2 / Rank 1: split-append markers
         ProfilerRecorder m_SortAppendCpuRec;
         ProfilerRecorder m_SortAppendUploadRec;
+        // Slice 3: strided-cache counters — Unity's ProfilerCounter<T> API isn't reliably available in
+        // this Unity version, so we read directly from GaussianSplatOctree's static aggregate fields
+        // (public static s_LastFrameCacheHits / Misses / Evictions / s_LiveCacheBytes). Same rolling
+        // window semantics as the profiler recorders above.
         readonly double[] m_SortRing = new double[kWindow];
         readonly double[] m_SubmitRing = new double[kWindow];
         readonly double[] m_MainRing = new double[kWindow];
@@ -45,6 +49,11 @@ namespace GsplatLod
         readonly double[] m_SortAppendRing = new double[kWindow];
         readonly double[] m_SortAppendCpuRing = new double[kWindow];
         readonly double[] m_SortAppendUploadRing = new double[kWindow];
+        // Slice 3 rings — hits/misses are per-frame counts; bytes is instantaneous.
+        readonly double[] m_CacheHitsRing = new double[kWindow];
+        readonly double[] m_CacheMissesRing = new double[kWindow];
+        readonly double[] m_CacheEvictionsRing = new double[kWindow];
+        readonly double[] m_CacheBytesRing = new double[kWindow];
         int m_RingIdx;
         int m_RingFill;
         float m_LastLog;
@@ -63,7 +72,7 @@ namespace GsplatLod
             m_SortAppendUploadRec = ProfilerRecorder.StartNew(ProfilerCategory.Render, "GaussianSplatOctree.Sort.AppendUpload", kWindow);
             m_CsvPath = System.IO.Path.Combine(Application.persistentDataPath, "gsplat_perf.csv");
             if (alsoWriteCsv && !System.IO.File.Exists(m_CsvPath))
-                System.IO.File.WriteAllText(m_CsvPath, "t_seconds,sort_ms_avg,submit_ms_avg,main_ms_avg,fps_avg,collect_ms,start_ms,wait_ms,append_ms,append_cpu_ms,append_upload_ms\n");
+                System.IO.File.WriteAllText(m_CsvPath, "t_seconds,sort_ms_avg,submit_ms_avg,main_ms_avg,fps_avg,collect_ms,start_ms,wait_ms,append_ms,append_cpu_ms,append_upload_ms,cache_hits,cache_misses,cache_evict,cache_bytes\n");
         }
 
         void OnDisable()
@@ -92,6 +101,11 @@ namespace GsplatLod
             m_SortAppendRing[m_RingIdx] = m_SortAppendRec.LastValue * 1e-6;
             m_SortAppendCpuRing[m_RingIdx] = m_SortAppendCpuRec.LastValue * 1e-6;
             m_SortAppendUploadRing[m_RingIdx] = m_SortAppendUploadRec.LastValue * 1e-6;
+            // Slice 3 counters — read the GaussianSplatOctree static aggregates directly.
+            m_CacheHitsRing[m_RingIdx] = GaussianSplatting.Runtime.GaussianSplatOctree.s_LastFrameCacheHits;
+            m_CacheMissesRing[m_RingIdx] = GaussianSplatting.Runtime.GaussianSplatOctree.s_LastFrameCacheMisses;
+            m_CacheEvictionsRing[m_RingIdx] = GaussianSplatting.Runtime.GaussianSplatOctree.s_LastFrameCacheEvictions;
+            m_CacheBytesRing[m_RingIdx] = GaussianSplatting.Runtime.GaussianSplatOctree.s_LiveCacheBytes;
             m_RingIdx = (m_RingIdx + 1) % kWindow;
             if (m_RingFill < kWindow) m_RingFill++;
 
@@ -101,12 +115,15 @@ namespace GsplatLod
             double sortSum = 0, submitSum = 0, mainSum = 0;
             double collectSum = 0, startSum = 0, waitSum = 0, appendSum = 0;
             double appendCpuSum = 0, appendUploadSum = 0;
+            double hitsSum = 0, missesSum = 0, evictSum = 0, bytesSum = 0;
             for (int i = 0; i < m_RingFill; i++)
             {
                 sortSum += m_SortRing[i]; submitSum += m_SubmitRing[i]; mainSum += m_MainRing[i];
                 collectSum += m_SortCollectRing[i]; startSum += m_SortStartRing[i];
                 waitSum += m_SortWaitRing[i]; appendSum += m_SortAppendRing[i];
                 appendCpuSum += m_SortAppendCpuRing[i]; appendUploadSum += m_SortAppendUploadRing[i];
+                hitsSum += m_CacheHitsRing[i]; missesSum += m_CacheMissesRing[i];
+                evictSum += m_CacheEvictionsRing[i]; bytesSum += m_CacheBytesRing[i];
             }
             double sortAvg = sortSum / m_RingFill;
             double submitAvg = submitSum / m_RingFill;
@@ -117,6 +134,11 @@ namespace GsplatLod
             double appendAvg = appendSum / m_RingFill;
             double appendCpuAvg = appendCpuSum / m_RingFill;
             double appendUploadAvg = appendUploadSum / m_RingFill;
+            double hitsAvg = hitsSum / m_RingFill;
+            double missesAvg = missesSum / m_RingFill;
+            double evictAvg = evictSum / m_RingFill;
+            double bytesAvg = bytesSum / m_RingFill;
+            double hitRatio = (hitsAvg + missesAvg) > 0.0 ? hitsAvg / (hitsAvg + missesAvg) : 0.0;
             double fpsAvg = mainAvg > 0.01 ? 1000.0 / mainAvg : 0;
 
             Debug.Log($"[MarkerRecorder] N={m_RingFill}  sort={sortAvg:F3}ms  submit={submitAvg:F3}ms  " +
@@ -124,6 +146,8 @@ namespace GsplatLod
             Debug.Log($"[MarkerRecorder-Sort] collect={collectAvg:F3}ms  start={startAvg:F3}ms  wait={waitAvg:F3}ms  append={appendAvg:F3}ms  " +
                       $"(cpu={appendCpuAvg:F3}ms upload={appendUploadAvg:F3}ms)  " +
                       $"(sum={collectAvg + startAvg + waitAvg + appendAvg:F3}ms vs total sort={sortAvg:F3}ms)");
+            Debug.Log($"[MarkerRecorder-Cache] hits/frame={hitsAvg:F1}  misses/frame={missesAvg:F1}  " +
+                      $"hit_ratio={hitRatio * 100.0:F1}%  evict/frame={evictAvg:F1}  bytes={bytesAvg / (1024.0 * 1024.0):F2}MB");
 
             if (alsoWriteCsv)
             {
@@ -138,7 +162,11 @@ namespace GsplatLod
                 sb.Append(waitAvg.ToString("F4")).Append(',');
                 sb.Append(appendAvg.ToString("F4")).Append(',');
                 sb.Append(appendCpuAvg.ToString("F4")).Append(',');
-                sb.Append(appendUploadAvg.ToString("F4")).Append('\n');
+                sb.Append(appendUploadAvg.ToString("F4")).Append(',');
+                sb.Append(hitsAvg.ToString("F2")).Append(',');
+                sb.Append(missesAvg.ToString("F2")).Append(',');
+                sb.Append(evictAvg.ToString("F2")).Append(',');
+                sb.Append(bytesAvg.ToString("F0")).Append('\n');
                 System.IO.File.AppendAllText(m_CsvPath, sb.ToString());
             }
         }

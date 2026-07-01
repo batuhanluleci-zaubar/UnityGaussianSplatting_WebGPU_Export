@@ -99,6 +99,23 @@ namespace GaussianSplatting.Runtime
                  "regardless of viewpoint without touching near content. Derive it from measured device frame time.")]
         [Min(0)] public int m_LodSplatBudget = 0;
 
+        [Header("Slice 3: strided-copy cache")]
+        [Tooltip("Slice 3: cache per-node strided permutations so the LOD append loop becomes a single MemCpy on hit. " +
+                 "Only helps the strided (step>1) path AND only when nodes are big (default floor=32 splats/node). " +
+                 "Off by default: scenes with m_OctreeMaxSplatsPerLeaf=1 (e.g. Phase2HQ) hit the floor and see no " +
+                 "benefit; enable when you have large-leaf octrees (~200+ splats/leaf) where cache-hit MemCpy beats " +
+                 "the per-index strided loop. See gsplat-slice3-strided-cache-findings.md.")]
+        public bool m_EnableStridedCache = false;
+        [Tooltip("Max cache slots per node (LRU). Each slot stores ceil(nodeSplats/step) ints, so total per-node = " +
+                 "sum over cached steps. K=4 covers the typical 3-6 distinct steps per frame and caps worst-case footprint.")]
+        [Range(1, 16)] public int m_StridedCacheSlotsPerNode = 4;
+        [Tooltip("Global cache byte budget (0 = platform default: 64 MB desktop / 16 MB mobile). Exceeding this triggers " +
+                 "cross-node LRU eviction. Warmup shakes out cold nodes fast so a small budget is fine.")]
+        [Min(0)] public int m_StridedCacheGlobalByteBudget = 0;
+        [Tooltip("Max cache misses processed per frame. Throttles first-frame allocation spikes when the whole visible " +
+                 "set is cold; misses beyond this cap fall through to the un-cached strided loop for one frame.")]
+        [Range(1, 512)] public int m_StridedCacheMaxMissesPerFrame = 32;
+
         [Tooltip("Draw octree leaf bounds in the Scene view (OnDrawGizmos)")]
         public bool m_DrawOctreeGizmos = true;
 
