@@ -370,7 +370,13 @@ namespace GaussianSplatting.Runtime
                     instanceCount = gs.m_GpuChunksValid ? gs.m_GpuChunks.count : 0;
 
                 cmb.BeginSample(s_ProfDraw);
-                cmb.DrawProcedural(m_CubeIndexBuffer, matrix, displayMat, 0, topology, indexCount, instanceCount, mpb);
+                // Single-Pass Instanced XR: double the instance count so the shader can render both
+                // eyes from one draw. GaussianSplats.shader splits SV_InstanceID back into
+                // (splatIdx, eyeIdx) via unity_StereoEyeCount. Multi-pass and mono use the raw count.
+                int drawInstances = instanceCount;
+                if (cam.stereoEnabled && XRSettings.stereoRenderingMode == XRSettings.StereoRenderingMode.SinglePassInstanced)
+                    drawInstances *= 2;
+                cmb.DrawProcedural(m_CubeIndexBuffer, matrix, displayMat, 0, topology, indexCount, drawInstances, mpb);
                 cmb.EndSample(s_ProfDraw);
                 
                 // Store current matrix as previous for next frame

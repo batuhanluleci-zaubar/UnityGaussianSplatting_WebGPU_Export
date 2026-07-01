@@ -23,6 +23,16 @@ CGPROGRAM
 // Remove compute shader requirement for WebGL compatibility
 // #pragma require compute
 
+// XR Single-Pass Instanced stereo. Declares the STEREO_INSTANCING_ON variant so both eyes
+// render in one draw call; the vert derives (splatIdx, eye) from SV_InstanceID. Non-XR /
+// mono keeps the original codepath at zero cost. Multiview variant included for future
+// mobile XR targets (Aura Vulkan / Quest). See GaussianSplatURPFeature.cs for how the pass
+// is XR-aware on the C# side.
+#pragma multi_compile _ STEREO_INSTANCING_ON STEREO_MULTIVIEW_ON
+
+#include "UnityCG.cginc"          // UNITY_VERTEX_OUTPUT_STEREO + stereo setup macros
+#include "UnityInstancing.cginc"  // unity_StereoEyeIndex handling under SPI
+
 #include "GaussianSplatting.hlsl"
 
 float _SplatScale;
@@ -45,6 +55,7 @@ struct v2f
     uint idx : TEXCOORD1;
     float2 vel : TEXCOORD2; // NDC motion delta (current - previous)
     float4 vertex : SV_POSITION;
+    UNITY_VERTEX_OUTPUT_STEREO   // declares unity_StereoEyeIndex for the fragment stage
 };
 
 // reason for using a separate uniform buffer is DX12
@@ -79,9 +90,21 @@ void DecomposeCovariance(float3 cov2d, out float2 v1, out float2 v2)
 v2f vert (uint vtxID : SV_VertexID, uint instID : SV_InstanceID)
 {
     v2f o = (v2f)0;
-    uint realIdx = instID;
+    UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
+    // Under Single-Pass Instanced XR, Unity doubles the instance count so instID encodes
+    // (splatIdx << 1) | eyeIdx. Split back into a per-splat index and set the eye output.
+    // In mono / multi-pass, unity_StereoEyeCount is 1 so this collapses to identity.
+    uint splatInst = instID;
+#if defined(STEREO_INSTANCING_ON) || defined(STEREO_MULTIVIEW_ON)
+    if (unity_StereoEyeCount > 1)
+    {
+        splatInst = instID / unity_StereoEyeCount;
+        unity_StereoEyeIndex = instID % unity_StereoEyeCount;
+    }
+#endif
+    uint realIdx = splatInst;
     if (_UseIndexMapping)
-        realIdx = _SplatIndexMap[instID];
+        realIdx = _SplatIndexMap[splatInst];
 
     o.idx = realIdx + sgu_frameOffset;
     SplatData splat = LoadSplatData(realIdx);
@@ -252,6 +275,7 @@ struct FragOut { half4 col : SV_Target0; half4 motion : SV_Target1; };
 
 FragOut frag (v2f i)
 {
+    UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);   // makes unity_StereoEyeIndex available in fragment
     FragOut o; o.col = 0; o.motion = half4(0, 0, 0, 0);
     
     float pos2 = dot(i.pos, i.pos);
