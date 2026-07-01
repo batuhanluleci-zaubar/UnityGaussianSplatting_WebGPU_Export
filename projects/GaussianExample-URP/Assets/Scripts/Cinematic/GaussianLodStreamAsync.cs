@@ -172,12 +172,13 @@ namespace GsplatLod
             }
 
             m_SceneCentre = (mn + mx) * 0.5f; m_SceneRadius = (mx - mn).magnitude * 0.5f;
-            // Auto-tune the LOD bands to the scene scale so we don't render the whole scene at coarsest
-            // just because the user opened the scene with a far camera. lodBaseDistance -> "where LOD steps
-            // from 0->1" needs to be on the same ORDER as the camera-to-content distance for a normally-framed
-            // shot. Rule: base ~= scene radius. For a 25m-radius scene this gives base=25 (previous default
-            // was 15, which pushed most chunks to LOD3/4 from a ~55m auto-framed camera).
-            lodBaseDistance = Mathf.Max(lodBaseDistance, m_SceneRadius * 1.2f);
+            // Auto-tune the LOD bands to the scene scale ONLY IF the user left it at the default 15
+            // (a small number that would push everything to coarsest in a large scene). If the user
+            // explicitly set anything else in the inspector, respect it — that's how you get to
+            // "10M source, near = raw, mid = LOD1, far = LOD2, ~1-1.5M rendered/frame, hits 120 FPS".
+            // Rule of thumb for 120 FPS on desktop: lodBaseDistance ~= chunk world extent * 1.5-2
+            // (so ~5-8m for 5m chunks). For quality-first: lodBaseDistance ~= sceneRadius (=~30m).
+            if (lodBaseDistance <= 15.5f) lodBaseDistance = m_SceneRadius * 1.2f;
             if (autoFrameCamera && cam != null)
             {
                 // Pull the camera IN to a normal framing (~1.3 x radius, close enough that near chunks pick
