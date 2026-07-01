@@ -21,6 +21,11 @@ namespace GaussianSplatting.Runtime
         internal static readonly ProfilerMarker s_ProfDraw = new(ProfilerCategory.Render, "GaussianSplat.Draw", MarkerFlags.SampleGPU);
         internal static readonly ProfilerMarker s_ProfCompose = new(ProfilerCategory.Render, "GaussianSplat.Compose", MarkerFlags.SampleGPU);
         internal static readonly ProfilerMarker s_ProfCalcView = new(ProfilerCategory.Render, "GaussianSplat.CalcView", MarkerFlags.SampleGPU);
+        // Alt#1 diagnostic: measures the CPU work of iterating active renderers, setting per-chunk MPB,
+        // calling PerformOctreeCulling, and recording DrawProcedural into the command buffer. This is
+        // the "CPU submit" number the audit uses to decide whether P3 unified-buffer refactor is worth it.
+        // NOT MarkerFlags.SampleGPU — this is main-thread CPU work (RenderGraph passes still record here).
+        internal static readonly ProfilerMarker s_ProfSubmit = new(ProfilerCategory.Render, "GaussianSplatRenderer.SubmitDraws");
 
         // ReSharper restore MemberCanBePrivate.Global
 
@@ -309,6 +314,12 @@ namespace GaussianSplatting.Runtime
             // the frustum. In a streamed multi-chunk scene (64 chunks, ~16 visible), this can save
             // 40+ per-chunk render setups per frame at ~zero cost.
             var s_FrustumPlanes = GeometryUtility.CalculateFrustumPlanes(cam);
+
+            // Alt#1: wrap the ENTIRE per-chunk submit loop (frustum test + mpb.Set* + octree cull
+            // trigger + DrawProcedural record). This is the "N per-chunk MPB churn" cost the audit
+            // wanted split from the sort cost. Wrap the loop as a whole, NOT the loop body — inside
+            // an ~M-element loop the per-iteration overhead accumulates.
+            using var _submitScope = s_ProfSubmit.Auto();
 
             foreach (var kvp in m_ActiveSplats)
             {

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
+using Unity.Profiling;      // Alt#1 sort/submit split
 using UnityEngine;
 // Added for simple threading support
 using System.Threading;
@@ -108,6 +109,11 @@ namespace GaussianSplatting.Runtime
         readonly List<NativeSorting.SortJobHandle> m_NativeSortJobs = new();
         // Track which jobs correspond to which data structures
         readonly List<NativeSortJobInfo> m_NativeJobInfos = new();
+
+        // Alt#1 diagnostic markers — split the GaussianSplatRenderGraph blob into sort vs submit
+        // so we can data-drive P3 (unified buffer refactor) vs alternatives. Zero-alloc, safe in
+        // Development + editor + player; picked up by ProfilerRecorder. See RendererMarkerRecorder.
+        static readonly ProfilerMarker s_SortMarker = new ProfilerMarker("GaussianSplatOctree.SortChunks");
 
         // Global native positions buffer (all splat positions) to avoid per-job copying
         NativeArray<float3> m_AllPositionsNative;
@@ -928,6 +934,7 @@ namespace GaussianSplatting.Runtime
         {
             if (!m_Built)
                 return;
+            using var _sortScope = s_SortMarker.Auto();   // Alt#1 marker — measures front-to-back CPU sort
             var camPosition = camera.transform.position;
             
             if (!m_VisibleSplatIndicesValid || !m_VisibleSplatIndices.IsCreated)
