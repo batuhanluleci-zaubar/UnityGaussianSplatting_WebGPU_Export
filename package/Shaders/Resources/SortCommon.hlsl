@@ -333,20 +333,28 @@ inline void WarpLevelMultiSplitWGE16(uint key, inout uint4 waveFlags)
 inline uint2 CountBitsWGE16(uint waveSize, uint ltMask, uint4 waveFlags)
 {
     uint2 count = uint2(0, 0);
-    
+
+    // Slice 2 / Rank 5: aras-p upstream d508f39c61 CountBitsWGE16 correctness graft.
+    // On waveSize > 32 (Adreno 660+ / some Vulkan) the previous inside-guard placement of
+    // "uint t = countbits(...)" and "count.y += t;" produced silent sort corruption because
+    // popcount on the per-part waveFlags was only accumulated when the current lane was in
+    // the current wavePart — but count.y must accumulate ALL parts to match RankKeysWGE16's
+    // downstream offset math. Nvidia (32) / Metal simdgroup (32) never entered the second
+    // wavePart iteration so the old code was accidentally correct there; hence "no repro on
+    // desktop, corruption on Quest". Matches aras-p main HEAD byte-for-byte.
     for(uint wavePart = 0; wavePart < waveSize; wavePart += 32)
     {
+        uint t = countbits(waveFlags[wavePart >> 5]);
         if (WaveGetLaneIndex() >= wavePart)
         {
-            uint t = countbits(waveFlags[wavePart >> 5]);
             if (WaveGetLaneIndex() >= wavePart + 32)
                 count.x += t;
             else
                 count.x += countbits(waveFlags[wavePart >> 5] & ltMask);
-            count.y += t;
         }
+        count.y += t;
     }
-    
+
     return count;
 }
 
