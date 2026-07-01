@@ -1489,7 +1489,7 @@ MonoBehaviour:
   m_RenderOrder: 0
   m_SplatScale: 1
   m_OpacityScale: 1
-  m_SHOrder: 3
+  m_SHOrder: 0
 --- !u!4 &2063086644
 Transform:
   m_ObjectHideFlags: 0
