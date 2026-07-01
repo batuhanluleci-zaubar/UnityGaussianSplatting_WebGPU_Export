@@ -60,6 +60,16 @@ namespace GsplatLod
         public int evalEveryNFrames = 10;
         public float lodUpdateDistance = 1.0f;
 
+        [Header("Full-quality shortcut")]
+        [Tooltip("Press this key in play mode to toggle FORCE-MAX-QUALITY: every visible chunk is pinned to " +
+                 "LOD0 (raw/finest), budget balancer is bypassed. Great A/B toggle to compare streamed vs " +
+                 "full asset quality. Chunks stream up over the next few evals; press again to release.")]
+        public KeyCode fullQualityToggleKey = KeyCode.F;
+        [Tooltip("Current state (also settable via inspector).")]
+        public bool forceMaxQuality = false;
+        [Tooltip("When force-max-quality is ON, the concurrency cap is raised so chunks refine to LOD0 faster.")]
+        [Range(1, 32)] public int forceQualityConcurrentLoads = 16;
+
         [Header("Misc")]
         public bool autoFrameCamera = true;
         public bool showHud = true;
@@ -192,6 +202,15 @@ namespace GsplatLod
                 Debug.Log("[StreamAsync] reset — restarting stream from coarsest LODs");
             }
 
+            // [F] toggles FORCE-MAX-QUALITY — pins every visible chunk to LOD0 (raw), bypasses budget.
+            // A/B compare streamed vs full asset quality with a single keystroke.
+            if (Input.GetKeyDown(fullQualityToggleKey))
+            {
+                forceMaxQuality = !forceMaxQuality;
+                m_LastEvalFrame = -9999;         // force immediate re-evaluate so chunks start refining now
+                Debug.Log($"[StreamAsync] force max quality = {(forceMaxQuality ? "ON — refining every visible chunk to LOD0" : "OFF — screen-error LOD + budget")}");
+            }
+
             PollLoads();     // advance in-flight loads every frame (assign when ready)
             bool camMoved = (cam.transform.position - m_LastCamPos).sqrMagnitude > lodUpdateDistance * lodUpdateDistance;
             int evalInterval = slowMotionDemo ? Mathf.Max(evalEveryNFrames, 30) : Mathf.Max(1, evalEveryNFrames);
@@ -249,6 +268,7 @@ namespace GsplatLod
                 c.dist = Mathf.Sqrt(wb.SqrDistance(camPos));
                 if (c.dist > maxDist) maxDist = c.dist;
                 if (!c.visible) { c.optimal = K1; continue; }
+                if (forceMaxQuality) { c.optimal = 0; m_VisSorted.Add(i); continue; }   // [F]-toggle: pin visible to LOD0
                 float effDist = c.dist * fovScale; int lv = 0; float thr = baseDist;
                 while (lv < K1 && effDist >= thr) { thr *= lodMultiplier; lv++; }
                 c.optimal = lv; m_VisSorted.Add(i);
@@ -259,7 +279,7 @@ namespace GsplatLod
             long total = m_HasEnvH ? m_EnvCount : 0;
             for (int i = 0; i < m_Chunks.Count; i++) m_Chunks[i].desired = m_Chunks[i].optimal;
             for (int k = 0; k < m_VisSorted.Count; k++) { var c = m_Chunks[m_VisSorted[k]]; total += c.splatCount[c.desired]; }
-            if (deviceBudget > 0 && total > deviceBudget)
+            if (deviceBudget > 0 && total > deviceBudget && !forceMaxQuality)
             {
                 for (int b = 0; b < kBuckets; b++) m_Bucket[b].Clear();
                 float invMax = (kBuckets - 1) / Mathf.Sqrt(maxDist);
@@ -283,7 +303,9 @@ namespace GsplatLod
                 if (ci >= 0 && !wanted.Contains(ci) && (m_Eval - m_Chunks[ci].lastWantedEval) > cooldownEvals) ReleaseSlot(s);
             }
 
-            int concurrentCap = slowMotionDemo ? 1 : maxConcurrentLoads;
+            int concurrentCap = slowMotionDemo ? 1
+                                : (forceMaxQuality ? Mathf.Max(maxConcurrentLoads, forceQualityConcurrentLoads)
+                                                   : maxConcurrentLoads);
             // acquire slots for wanted-not-resident (nearest first); coarse-first load.
             // Gate slot assignment on the load actually starting, so a chunk never gets a slot
             // without a pending load (that would strand it — acquire skips slot>=0, refine needs hasCur).
@@ -295,7 +317,8 @@ namespace GsplatLod
                 int free = FindFreeOrEvictableSlot(i);
                 if (free < 0) continue;
                 m_SlotChunk[free] = i; c.slot = free;
-                StartLoad(c, coarseFirst ? c.addr.Length - 1 : c.desired); m_InFlight++;
+                // Force-max skips the "instant coarse image" ramp and loads the target level (LOD0) directly.
+                StartLoad(c, forceMaxQuality ? c.desired : (coarseFirst ? c.addr.Length - 1 : c.desired)); m_InFlight++;
             }
             // refine resident chunks one level toward desired (nearest first, throttled)
             for (int k = 0; k < m_VisSorted.Count && m_InFlight < concurrentCap; k++)
@@ -304,7 +327,11 @@ namespace GsplatLod
                 if (c.slot < 0 || !c.hasCur) continue;
                 if (c.curLevel != c.desired && !(c.hasPen))
                 {
-                    int step = c.curLevel > c.desired ? c.curLevel - 1 : c.curLevel + 1;
+                    // Force-max-quality jumps STRAIGHT to the target LOD (skipping intermediates) so the
+                    // [F] toggle snaps to full quality within a few evals instead of 4-5 progressive steps.
+                    // Normal mode refines one level at a time for smooth streaming.
+                    int step = forceMaxQuality ? c.desired
+                             : (c.curLevel > c.desired ? c.curLevel - 1 : c.curLevel + 1);
                     StartLoad(c, step); m_InFlight++;
                 }
             }
@@ -357,7 +384,10 @@ namespace GsplatLod
             var sb = new StringBuilder();
             sb.AppendLine($"GaussianLodStreamAsync (Addressables)  resident={m_ResidentSplats / 1000}K / budget={deviceBudget / 1000}K  slots={m_ResidentChunks}/{maxResidentChunks} of {m_Chunks.Count}  visible={m_VisibleChunks}");
             int pending = 0; foreach (var c in m_Chunks) if (c.hasPen) pending++;
-            sb.AppendLine($"streaming: inFlight(loading)={pending}   budgetScale={m_BudgetScale:F2}   env={(enableEnv ? m_EnvCount / 1000 + "K" : "off")}   {(slowMotionDemo ? "SLOW-MO on — press [R] to reset" : "press [R] to reset (see progressive refine)")}");
+            string modeTag = forceMaxQuality ? "★ FULL QUALITY (all LOD0)"
+                             : slowMotionDemo ? "SLOW-MO demo — [R] reset"
+                             : "streaming — [F] toggle full quality, [R] reset";
+            sb.AppendLine($"streaming: inFlight(loading)={pending}   budgetScale={m_BudgetScale:F2}   env={(enableEnv ? m_EnvCount / 1000 + "K" : "off")}   {modeTag}");
 
             // Per-LOD histogram (columns: LOD0 fine .. LODn coarse) — WATCH chunks climb from coarse
             // to fine as SuperSplat's "progressive refinement" streams in.
