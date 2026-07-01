@@ -152,6 +152,27 @@ namespace GaussianSplatting.Runtime
         static readonly ProfilerMarker s_SortAppendCpuMarker = new ProfilerMarker("GaussianSplatOctree.Sort.AppendCpu");       // (d1) strided List<int> -> NativeArray fill
         static readonly ProfilerMarker s_SortAppendUploadMarker = new ProfilerMarker("GaussianSplatOctree.Sort.AppendUpload"); // (d2) UpdateVisibleIndicesBuffer GPU upload
 
+        // Slice 2 / Rank 4: per-frame frustum-plane cache. GeometryUtility.CalculateFrustumPlanes
+        // marshals via P/Invoke AND allocates a new Plane[6] every call — we hit it up to 20 times
+        // per frame today (1x SortVisibleSplatsByDepth + 1x PerformOctreeCulling per chunk).
+        // Keyed on (Time.frameCount, cameraInstanceID) so XR two-eye and shadow-caster passes still
+        // recompute per-camera per-frame while sibling octrees share the result.
+        static readonly Plane[] s_FramePlanes = new Plane[6];
+        static int s_FramePlanesFrame = -1;
+        static int s_FramePlanesCamId;
+        static Plane[] GetCachedFrustumPlanes(Camera cam)
+        {
+            int camId = cam.GetInstanceID();
+            int frame = Time.frameCount;
+            if (s_FramePlanesFrame != frame || s_FramePlanesCamId != camId)
+            {
+                GeometryUtility.CalculateFrustumPlanes(cam, s_FramePlanes);
+                s_FramePlanesFrame = frame;
+                s_FramePlanesCamId = camId;
+            }
+            return s_FramePlanes;
+        }
+
         // Global native positions buffer (all splat positions) to avoid per-job copying
         NativeArray<float3> m_AllPositionsNative;
         bool m_AllPositionsNativeValid;
@@ -683,8 +704,8 @@ namespace GaussianSplatting.Runtime
                 return 0;
             }
 
-            // Extract frustum planes from camera
-            var frustumPlanes = GeometryUtility.CalculateFrustumPlanes(camera);
+            // Slice 2 / Rank 4: cached frustum planes — up to 20 chunks share the same camera-frame result.
+            var frustumPlanes = GetCachedFrustumPlanes(camera);
 
             // Traverse octree and collect visible splats
             int currentIndex = 0;
@@ -973,16 +994,35 @@ namespace GaussianSplatting.Runtime
                 return;
             using var _sortScope = s_SortMarker.Auto();   // Alt#1 marker — measures front-to-back CPU sort
             var camPosition = camera.transform.position;
-            
+
             if (!m_VisibleSplatIndicesValid || !m_VisibleSplatIndices.IsCreated)
             {
                 visibleSplatCount = 0;
                 return;
             }
-            
+
+            // Slice 2 / Rank 2: empty octree short-circuit — no nodes, nothing to sort or upload.
+            // Prior sort tasks (if any) must still be allowed to complete on their own; we only skip
+            // the per-frame work here. m_SortTasks are joined non-blockingly on the next real frame.
+            if (m_Nodes.Count == 0)
+            {
+                visibleSplatCount = 0;
+                return;
+            }
+
             // TEMP sub-marker (a): visible-node traversal + m_VisibleNodeRefs.Sort
             m_VisibleNodeRefs.Clear();
-            var frustumPlanes = GeometryUtility.CalculateFrustumPlanes(camera);
+            var frustumPlanes = GetCachedFrustumPlanes(camera);
+            // Slice 2 / Rank 2: root-AABB reject — if the octree root is fully outside the frustum,
+            // skip traversal, sort-start, and Append entirely. This is exactly the same TestPlanesAABB
+            // that CullNodeRecursive would do at the root; hoisting it lets us also skip the sort-start
+            // work below. Uses m_Nodes[0].bounds (root, world-space-equivalent-under-identity-transform)
+            // vs camera-derived world-space planes — same semantics as CullNodeRecursive today.
+            if (!GeometryUtility.TestPlanesAABB(frustumPlanes, m_Nodes[0].bounds))
+            {
+                visibleSplatCount = 0;
+                return;
+            }
             s_SortCollectMarker.Begin();
             CollectVisibleNodesWithDistance(0, frustumPlanes, camPosition);
             // Node-ref sort belongs in (a); it runs on every path.
@@ -992,6 +1032,15 @@ namespace GaussianSplatting.Runtime
             // Slice 1 / Fix A: static struct comparer replaces per-frame lambda (no delegate alloc, no virtual dispatch)
             m_VisibleNodeRefs.Sort(s_VisibleNodeRefDistanceComparer);
             s_SortCollectMarker.End();
+
+            // Slice 2 / Rank 2: zero-visible-refs early exit — nothing to sort or append. Outliers are
+            // handled by the caller-side CullNodeRecursive path already; here we ONLY skip the sort/append
+            // pipeline. Still probe m_SortTasks so any prior async work drains cleanly next frame.
+            if (m_VisibleNodeRefs.Count == 0 && m_OthersIndices.Count == 0)
+            {
+                visibleSplatCount = 0;
+                return;
+            }
 
             if (enableParallelSorting)
             {
