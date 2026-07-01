@@ -431,15 +431,20 @@ namespace GaussianSplatting.Runtime
             // Allocate a minimal 1-entry structured buffer so renderer code can safely bind/check it.
             if (m_VisibleIndicesBuffer == null)
             {
-                m_VisibleIndicesBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, 1, sizeof(uint))
+                // Slice 2 / Rank 3: LockBufferForWrite usage — required flag for the fast path in
+                // UpdateVisibleIndicesBuffer. Zero-fill via a one-shot LockBufferForWrite instead of
+                // SetData (still a cold-path one-off, but keeps the code path symmetrical).
+                m_VisibleIndicesBuffer = new GraphicsBuffer(
+                    GraphicsBuffer.Target.Structured,
+                    GraphicsBuffer.UsageFlags.LockBufferForWrite,
+                    1, sizeof(uint))
                 {
                     name = "GaussianSplatVisibleIndices"
                 };
-                var init = new NativeArray<uint>(1, Allocator.Temp);
-                init[0] = 0u;
-                m_VisibleIndicesBuffer.SetData(init);
+                var mapped = m_VisibleIndicesBuffer.LockBufferForWrite<uint>(0, 1);
+                mapped[0] = 0u;
+                m_VisibleIndicesBuffer.UnlockBufferAfterWrite<uint>(1);
                 visibleSplatCount = 0;
-                init.Dispose();
             }
 
             if (GaussianSplatSettings.instance.m_VerboseLog) Debug.Log($"Octree build completed: {m_Nodes.Count} total nodes, others={m_OthersIndices.Count}");
@@ -810,27 +815,30 @@ namespace GaussianSplatting.Runtime
                 m_VisibleIndicesBuffer?.Dispose();
                 // Allocate with some extra space to avoid frequent reallocations
                 int bufferSize = Mathf.NextPowerOfTwo(requiredSize);
-                m_VisibleIndicesBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, bufferSize, sizeof(uint))
+                // Slice 2 / Rank 3: LockBufferForWrite usage flag — enables zero-copy mapped-VRAM
+                // upload path via LockBufferForWrite/UnlockBufferAfterWrite instead of the double-copy
+                // SetData staging round-trip. On drivers that can't map the target directly this falls
+                // back to a staging path but still eliminates one driver submission per SetData call.
+                m_VisibleIndicesBuffer = new GraphicsBuffer(
+                    GraphicsBuffer.Target.Structured,
+                    GraphicsBuffer.UsageFlags.LockBufferForWrite,
+                    bufferSize, sizeof(uint))
                 {
                     name = "GaussianSplatVisibleIndices"
                 };
             }
 
-            // Upload visible indices directly from native array (reinterpret cast from int to uint)
+            // Slice 2 / Rank 3: replace SetData with LockBufferForWrite + UnsafeUtility.MemCpy.
+            // Kills 20 driver round-trips per frame (one per chunk). Also removes the safety-handle
+            // marshalling needed for the ConvertExistingDataToNativeArray path.
             unsafe
             {
-                // Create a NativeArray<uint> view of our int data (reinterpret cast)
-                var uintView = NativeArrayUnsafeUtility.ConvertExistingDataToNativeArray<uint>(
-                    (void*)m_VisibleSplatIndices.GetUnsafeReadOnlyPtr(),
-                    visibleSplatCount,
-                    Allocator.None);
-                
-                #if ENABLE_UNITY_COLLECTIONS_CHECKS
-                NativeArrayUnsafeUtility.SetAtomicSafetyHandle(ref uintView, 
-                    NativeArrayUnsafeUtility.GetAtomicSafetyHandle(m_VisibleSplatIndices));
-                #endif
-                
-                m_VisibleIndicesBuffer.SetData(uintView, 0, 0, visibleSplatCount);
+                var mapped = m_VisibleIndicesBuffer.LockBufferForWrite<uint>(0, visibleSplatCount);
+                UnsafeUtility.MemCpy(
+                    mapped.GetUnsafePtr(),
+                    m_VisibleSplatIndices.GetUnsafeReadOnlyPtr(),
+                    (long)visibleSplatCount * sizeof(uint));
+                m_VisibleIndicesBuffer.UnlockBufferAfterWrite<uint>(visibleSplatCount);
             }
         }
 
