@@ -120,6 +120,41 @@ namespace GaussianSplatting.Runtime
                 m_AppendScratch = new int[newSize];
             }
         }
+
+        // Slice 4 / Rank 1: pooled per-frame scratch for ParallelSortVisibleNodes to eliminate
+        // per-call allocations of snapshot[], nodesToSort List, tasks[], workLock, and the
+        // GetNextWorkIndex local-function closure. ParallelSortVisibleNodes is called serially
+        // per octree (one call per SortVisibleSplatsByDepth); the previous-frame's tasks must be
+        // complete before a new fanout is spawned (see previousSortTasksCompleted guard in
+        // SortVisibleSplatsByDepth). That guard makes these instance fields safe to reuse.
+        VisibleNodeRef[] m_SortScratchSnapshot = System.Array.Empty<VisibleNodeRef>();
+        int m_SortScratchSnapshotLength;
+        readonly List<int> m_SortScratchNodesToSort = new();
+        readonly object m_SortWorkLock = new object();
+        int m_SortNextWorkIndex;
+
+        void EnsureSortScratchSnapshot(int required)
+        {
+            if (m_SortScratchSnapshot.Length < required)
+            {
+                int newSize = m_SortScratchSnapshot.Length == 0 ? 64 : m_SortScratchSnapshot.Length;
+                while (newSize < required) newSize *= 2;
+                m_SortScratchSnapshot = new VisibleNodeRef[newSize];
+            }
+        }
+
+        // Hoisted from ParallelSortVisibleNodes local-function; called by worker Tasks.
+        // Synchronization semantics unchanged: workers coordinate on m_SortWorkLock and pull
+        // work indices from m_SortNextWorkIndex.
+        int GetNextSortWorkIndex()
+        {
+            lock (m_SortWorkLock)
+            {
+                if (m_SortNextWorkIndex >= 0)
+                    return m_SortNextWorkIndex--;
+                return -1;
+            }
+        }
         
         // Reusable stack for non-recursive octree traversal
         readonly Stack<int> m_TraversalStack = new();
@@ -1697,12 +1732,20 @@ namespace GaussianSplatting.Runtime
 
         Task[] ParallelSortVisibleNodes(Vector3 camPosition)
         {
-            // Snapshot the visible node refs to avoid concurrent access from parallel tasks
-            var snapshot = m_VisibleNodeRefs.ToArray();
-            int nodeCount = snapshot.Length;
+            // Slice 4 / Rank 1: pool the snapshot buffer instead of allocating a fresh
+            // VisibleNodeRef[] every call. The previousSortTasksCompleted guard in the caller
+            // ensures no worker is reading the previous frame's contents.
+            int nodeCount = m_VisibleNodeRefs.Count;
+            EnsureSortScratchSnapshot(nodeCount);
+            m_SortScratchSnapshotLength = nodeCount;
+            var snapshot = m_SortScratchSnapshot;
+            for (int si = 0; si < nodeCount; si++)
+                snapshot[si] = m_VisibleNodeRefs[si];
 
-            // Pre-filter nodes that actually need sorting for better task utilization
-            var nodesToSort = new List<int>(); // Store indices into the snapshot array
+            // Pre-filter nodes that actually need sorting for better task utilization.
+            // Slice 4 / Rank 1: reuse the pooled List<int> instead of allocating a fresh one.
+            var nodesToSort = m_SortScratchNodesToSort;
+            nodesToSort.Clear();
             for (int i = 0; i < nodeCount; i++)
             {
                 var nodeRef = snapshot[i];
@@ -1762,7 +1805,9 @@ namespace GaussianSplatting.Runtime
 
             if (sortNodeCount == 0)
             {
-                // No nodes need sorting; just spawn outlier task if needed
+                // No nodes need sorting; just spawn outlier task if needed.
+                // (needOutlierResort must be true here because the early-return above filtered
+                // the sortNodeCount==0 && !needOutlierResort case.)
                 var outlierTask = CreateOutlierTaskIfNeeded();
                 if (outlierTask != null)
                     return new Task[] { outlierTask };
@@ -1781,10 +1826,13 @@ namespace GaussianSplatting.Runtime
                     seqTask = Task.Run(() =>
                     {
                         // Process from front to back for front-to-back rendering (closer nodes processed first)
-                        for (int i = sortNodeCount - 1; i >= 0; i--)
+                        var localNodesToSort = m_SortScratchNodesToSort;
+                        var localSnapshot = m_SortScratchSnapshot;
+                        int localCount = localNodesToSort.Count;
+                        for (int i = localCount - 1; i >= 0; i--)
                         {
-                            int nodeRefIndex = nodesToSort[i];
-                            var nodeRef = snapshot[nodeRefIndex];
+                            int nodeRefIndex = localNodesToSort[i];
+                            var nodeRef = localSnapshot[nodeRefIndex];
                             var node = m_Nodes[nodeRef.nodeIndex];
                             SortSplatsInNodeThreadSafe(node.splatIndices, camPosition);
                             node.isSorted = true;
@@ -1810,38 +1858,33 @@ namespace GaussianSplatting.Runtime
             }
 
             // Work-stealing parallel sort implementation
-            // Shared work queue with thread-safe access - process from front to back for front-to-back rendering
-            int nextWorkIndex = sortNodeCount - 1; // Start from the end (closest nodes)
-            object workLock = new object();
-
-            // Get next work item (thread-safe) - process from front to back for front-to-back rendering
-            int GetNextWorkIndex()
-            {
-                lock (workLock)
-                {
-                    if (nextWorkIndex >= 0)
-                        return nextWorkIndex--;
-                    return -1; // No more work
-                }
-            }
+            // Slice 4 / Rank 1: hoisted workLock + nextWorkIndex to instance fields to eliminate
+            // the local-function closure alloc. Serial-per-octree invocation guaranteed by the
+            // previousSortTasksCompleted guard in the caller.
+            m_SortNextWorkIndex = sortNodeCount - 1; // Start from the end (closest nodes)
 
             // Determine up-front whether we need a dedicated outlier task so we can size the tasks array correctly
             bool outlierTaskNeeded = needOutlierResort;
+            int totalTasks = workers + (outlierTaskNeeded ? 1 : 0);
 
-            // Create worker tasks that pull work as needed
-            Task[] tasks = new Task[workers + (outlierTaskNeeded ? 1 : 0)];
-            
+            // Create worker tasks that pull work as needed. Task[] itself is small (~10 refs),
+            // so we do not pool it — the closure + snapshot + nodesToSort pool captures the
+            // >>99% of the alloc bytes.
+            Task[] tasks = new Task[totalTasks];
+
             for (int w = 0; w < workers; w++)
             {
                 tasks[w] = Task.Run(() =>
                 {
+                    var localNodesToSort = m_SortScratchNodesToSort;
+                    var localSnapshot = m_SortScratchSnapshot;
                     try
                     {
                         int workIndex;
-                        while ((workIndex = GetNextWorkIndex()) != -1)
+                        while ((workIndex = GetNextSortWorkIndex()) != -1)
                         {
-                            int nodeRefIndex = nodesToSort[workIndex];
-                            var nodeRef = snapshot[nodeRefIndex];
+                            int nodeRefIndex = localNodesToSort[workIndex];
+                            var nodeRef = localSnapshot[nodeRefIndex];
                             var node = m_Nodes[nodeRef.nodeIndex];
                             SortSplatsInNodeThreadSafe(node.splatIndices, camPosition);
                             node.isSorted = true;
@@ -1855,10 +1898,10 @@ namespace GaussianSplatting.Runtime
                         Debug.LogError($"Parallel splat sorting exception in worker task: {ex}");
                         // Continue processing remaining work items with fallback method
                         int workIndex;
-                        while ((workIndex = GetNextWorkIndex()) != -1)
+                        while ((workIndex = GetNextSortWorkIndex()) != -1)
                         {
-                            int nodeRefIndex = nodesToSort[workIndex];
-                            var nodeRef = snapshot[nodeRefIndex];
+                            int nodeRefIndex = localNodesToSort[workIndex];
+                            var nodeRef = localSnapshot[nodeRefIndex];
                             var node = m_Nodes[nodeRef.nodeIndex];
                             try
                             {
