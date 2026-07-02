@@ -22,7 +22,7 @@ import time
 import numpy as np
 
 from spz_reader import read_spz
-from merge import voxel_merge
+from merge import voxel_merge, _quat_to_R
 from ply_writer import write_ply
 
 
@@ -58,16 +58,32 @@ def subset(d, idx):
     return out
 
 
-def chunk_aabb(sub):
+def chunk_aabb(sub, k_sigma=3.0):
     """Robust world AABB: percentile-trimmed position bounds (a few giant outlier splats
     otherwise inflate the box to uselessness — the known outlier-bounds trap) expanded by a
     percentile scale margin. The chunk still RENDERS all its splats; this box is only the
-    metadata used for frustum-cull + distance/screen-error LOD selection."""
+    metadata used for frustum-cull + distance/screen-error LOD selection.
+
+    Returns four values: (lo, hi, loE, hiE) where
+      - lo/hi are the v1 percentile-trimmed position AABB (backward-compat),
+      - loE/hiE are the v2 ellipsoid-extent bounds via sum(pos ± |R|·scale·kSigma):
+          per-Gaussian oriented-box extents summed over positions -> a tighter but
+          conservative bound that accounts for splat shape/orientation. The reduction
+          uses the 99.9 percentile per axis to shrug off single-splat outliers (giant
+          floaters otherwise blow the box up 2x)."""
     p = sub["positions"].astype(np.float64)
     lo = np.percentile(p, 0.5, axis=0)
     hi = np.percentile(p, 99.5, axis=0)
     margin = float(np.percentile(sub["scales_lin"], 95.0)) * 2.0  # robust ~2 sigma, outlier-proof
-    return (lo - margin).tolist(), (hi + margin).tolist()
+    # Ellipsoid-extent bound. R has shape [N,3,3]; ext[n,i] = sum_j |R[n,i,j]| * scale[n,j] * kSigma
+    R = _quat_to_R(sub["quats"])
+    scales = sub["scales_lin"].astype(np.float64)
+    ext = np.einsum('nij,nj->ni', np.abs(R), scales) * float(k_sigma)
+    # Use 99.9 percentile trim on the reducer so a single giant-scale outlier does not
+    # inflate the ellipsoid box by 2x+ (see risk note in the design).
+    loE = np.percentile(p - ext, 0.1, axis=0)
+    hiE = np.percentile(p + ext, 99.9, axis=0)
+    return (lo - margin).tolist(), (hi + margin).tolist(), loE.tolist(), hiE.tolist()
 
 
 def main():
@@ -90,8 +106,18 @@ def main():
     ap.add_argument("--raw-lod0", action="store_true",
                     help="LOD0 = RAW splats of the chunk (no merge). Max fidelity when close, matches SuperSplat's "
                          "top-LOD design. LOD1+ still voxel-merged; --voxel becomes the LOD1 voxel size.")
+    ap.add_argument("--schema-version", type=int, default=2, choices=(1, 2),
+                    help="Manifest schema version. 2 (default) emits SuperSplat-parity filenames[] address "
+                         "table + per-leaf fileIdx + boundMinEllipsoid/boundMaxEllipsoid + environment{} block. "
+                         "1 emits the legacy v1 shape (no filenames[], no ellipsoid bounds, top-level envFile).")
+    ap.add_argument("--k-sigma", type=float, default=3.0,
+                    help="Ellipsoid bound k-sigma multiplier (v2 only). Larger = more conservative bounds.")
     ap.set_defaults(env=True)
     args = ap.parse_args()
+
+    if args.lod_mult < 1.2:
+        print(f"WARNING: --lod-mult {args.lod_mult} < 1.2 — SuperSplat parity plan recommends >= 1.2 (default 3.0). "
+              f"Very small multipliers overlap LOD bands and defeat progressive refinement.")
 
     t0 = time.time()
     d = read_spz(args.input)
@@ -103,16 +129,25 @@ def main():
     leaves = kd_split(d["positions"].astype(np.float64), args.chunks)
     print(f"KD-split into {len(leaves)} chunks: sizes {[l.shape[0] for l in leaves]}")
 
-    manifest = {"version": 1, "scene": scene, "chunkCount": len(leaves),
+    is_v2 = (args.schema_version >= 2)
+    manifest = {"version": args.schema_version, "scene": scene, "chunkCount": len(leaves),
                 "lodLevels": args.levels, "voxel0": args.voxel, "lodMult": args.lod_mult,
                 "chunks": []}
+    if is_v2:
+        manifest["generator"] = "chunk_lod.py v2"
+        manifest["filenames"] = []  # SuperSplat-parity canonical address table
+        manifest["bounds"] = {"kind": "ellipsoidExtent", "kSigma": float(args.k_sigma)}
+    filenames = manifest["filenames"] if is_v2 else None
     total_by_lod = [0] * args.levels
 
     for cid, idx in enumerate(leaves):
         sub = subset(d, idx)
-        bmin, bmax = chunk_aabb(sub)
+        bmin, bmax, bminE, bmaxE = chunk_aabb(sub, k_sigma=args.k_sigma)
         centre = [(a + b) * 0.5 for a, b in zip(bmin, bmax)]
         entry = {"id": cid, "boundMin": bmin, "boundMax": bmax, "centre": centre, "lods": []}
+        if is_v2:
+            entry["boundMinEllipsoid"] = bminE
+            entry["boundMaxEllipsoid"] = bmaxE
         for lvl in range(args.levels):
             fname = f"{scene}_c{cid}_lod{lvl}.ply"
             if lvl == 0 and args.raw_lod0:
@@ -127,7 +162,11 @@ def main():
                 n1 = raw["positions"].shape[0]
                 write_ply(os.path.join(args.out, fname), raw["positions"], raw["scales_lin"],
                           raw["quats"], raw["opacity"], raw["dc"], raw["sh"])
-                entry["lods"].append({"level": 0, "file": fname, "voxel": 0.0, "splatCount": int(n1)})
+                lod_entry = {"level": 0, "file": fname, "voxel": 0.0, "splatCount": int(n1)}
+                if is_v2:
+                    lod_entry["fileIdx"] = len(filenames)
+                    filenames.append(fname)
+                entry["lods"].append(lod_entry)
                 print(f"  c{cid} lod0 (raw):                 {idx.shape[0]:,} -> {n1:,} splats -> {fname}")
             else:
                 vox = args.voxel * (args.lod_mult ** max(0, lvl - (1 if args.raw_lod0 else 0)))
@@ -136,7 +175,11 @@ def main():
                 n1 = m["positions"].shape[0]
                 write_ply(os.path.join(args.out, fname), m["positions"], m["scales_lin"],
                           m["quats"], m["opacity"], m["dc"], m["sh"])
-                entry["lods"].append({"level": lvl, "file": fname, "voxel": round(vox, 5), "splatCount": int(n1)})
+                lod_entry = {"level": lvl, "file": fname, "voxel": round(vox, 5), "splatCount": int(n1)}
+                if is_v2:
+                    lod_entry["fileIdx"] = len(filenames)
+                    filenames.append(fname)
+                entry["lods"].append(lod_entry)
                 print(f"  c{cid} lod{lvl}: voxel={vox:.4f}  {idx.shape[0]:,} -> {n1:,} splats -> {fname}")
             total_by_lod[lvl] += n1
         manifest["chunks"].append(entry)
@@ -153,8 +196,26 @@ def main():
         envname = f"{scene}_env.ply"
         write_ply(os.path.join(args.out, envname), me["positions"], me["scales_lin"],
                   me["quats"], me["opacity"], me["dc"], me["sh"])
+        # Top-level v1-compat mirrors (pre-B4 readers ignore environment{}).
         manifest["envFile"] = envname
         manifest["envSplatCount"] = int(ne)
+        if is_v2:
+            # Ellipsoid extent of the env asset (which is the whole scene).
+            env_bmin, env_bmax, env_bminE, env_bmaxE = chunk_aabb(me, k_sigma=args.k_sigma)
+            env_fi = len(filenames)
+            filenames.append(envname)
+            manifest["environment"] = {
+                "directory": "env",
+                "files": [envname],
+                "fileIdx": [env_fi],
+                "splatCount": int(ne),
+                "voxel": round(vox_env, 5),
+                "residency": "alwaysOn",
+                "boundMin": env_bmin,
+                "boundMax": env_bmax,
+                "boundMinEllipsoid": env_bminE,
+                "boundMaxEllipsoid": env_bmaxE,
+            }
         print(f"  env: voxel={vox_env:.4f}  {n0:,} -> {ne:,} splats -> {envname}")
 
     with open(os.path.join(args.out, "manifest.json"), "w") as f:
