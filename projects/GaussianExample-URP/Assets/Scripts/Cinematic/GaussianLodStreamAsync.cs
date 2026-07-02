@@ -18,15 +18,41 @@ using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
 using GaussianSplatting.Runtime;
+using GaussianSplatting.Runtime.StreamedSog;
 
 namespace GsplatLod
 {
     public class GaussianLodStreamAsync : MonoBehaviour
     {
+        /// <summary>
+        /// Which on-disk format the streamer expects at <see cref="manifestPath"/>.
+        /// <c>Auto</c> sniffs the path (see <see cref="SogReader.IsSogPath"/>) and picks
+        /// SOG when it sees a .sog dir or a lod-meta.json file, otherwise SPZ.
+        /// </summary>
+        public enum StreamFormat { Auto, Spz, Sog }
+
         [Header("Source")]
         // Relative path resolved under Application.streamingAssetsPath first; falls back to the
         // absolute dev-machine path via LodManifestResolver when running in the editor.
         public string manifestPath = "gsplat_lod/uhq/manifest.json";
+
+        [Tooltip("Which streaming format to load. Auto = sniff manifestPath (SOG if .sog dir / lod-meta.json, else SPZ).")]
+        [SerializeField] StreamFormat format = StreamFormat.Auto;
+
+        [Tooltip("Populated at Start(): which reader path was chosen after format sniffing.")]
+        [SerializeField] StreamFormat resolvedFormat = StreamFormat.Auto;
+
+        // Selected reader token. Non-null after Start() when initialisation succeeded.
+        // For SPZ this only holds the manifest path (SPZ path uses Addressables direct); for
+        // SOG this holds the parsed SogManifest + flat leaf array + chunk loader.
+        ISplatChunkReader m_ChunkReader;
+
+        // SOG-side machinery. Only allocated when resolvedFormat == Sog. The SPZ path leaves
+        // these null and the existing Addressables logic below runs unchanged.
+        SogManifest m_SogManifest;
+        SogChunkLoader m_SogChunkLoader;
+        SogStreamer m_SogStreamer;
+
         public Camera cam;
         public bool enableEnv = false;
 
@@ -176,6 +202,32 @@ namespace GsplatLod
 
             manifestPath = LodManifestResolver.Resolve(manifestPath, "[StreamAsync]");
             if (manifestPath == null) { enabled = false; return; }
+
+            // ------------------------------------------------------------------
+            // Track C4: factory — pick SOG vs SPZ reader based on `format` +
+            // manifestPath sniffing. SOG path is initialised here as a sibling
+            // to the existing SPZ machinery (see SetupSogReader) and does not
+            // rip out the SPZ path — an Addressables-backed SPZ scene still
+            // exercises every line below unchanged.
+            // ------------------------------------------------------------------
+            resolvedFormat = format;
+            if (resolvedFormat == StreamFormat.Auto)
+                resolvedFormat = SogReader.IsSogPath(manifestPath) ? StreamFormat.Sog : StreamFormat.Spz;
+
+            if (resolvedFormat == StreamFormat.Sog)
+            {
+                if (!SetupSogReader(manifestPath)) { enabled = false; return; }
+                // SOG runtime binds here — the SPZ-specific manifest walk below is skipped
+                // (SPZ code path only runs when the format-sniff picked SPZ). The SOG streamer
+                // owns its own state machine; nothing more to configure at Start() beyond
+                // logging what was loaded.
+                Debug.Log($"[StreamAsync] SOG reader ready (leaves={m_SogManifest.Leaves.Length}, " +
+                          $"chunks={m_SogManifest.Meta.Filenames?.Length ?? 0}, " +
+                          $"lodLevels={m_SogManifest.LodLevels})");
+                return;
+            }
+
+            m_ChunkReader = new SpzChunkReader(manifestPath);
             var man = JsonUtility.FromJson<LodManifest>(File.ReadAllText(manifestPath));
             // B4: fail-hard version+shape validation. JsonUtility silently drops unknown fields,
             // so an unversioned or too-new payload would blackhole every chunk on an older reader.
@@ -239,8 +291,58 @@ namespace GsplatLod
             Debug.Log($"[StreamAsync] {m_Chunks.Count} chunks, pool={poolN}, budget={deviceBudget}, radius={m_SceneRadius:F1}m, lodBaseDistance={lodBaseDistance:F1}m (Addressables async)");
         }
 
+        /// <summary>
+        /// Track C4: instantiate the SOG reader stack (manifest + loader + streamer) as a
+        /// sibling to the existing SPZ machinery. Called only when resolvedFormat == Sog.
+        /// Returns false and disables the component on any error, matching the SPZ
+        /// path's "fail-hard on manifest error" behaviour.
+        /// </summary>
+        bool SetupSogReader(string sogPath)
+        {
+            try
+            {
+                m_SogManifest = SogReader.LoadManifest(sogPath);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[StreamAsync] SOG LoadManifest failed for '{sogPath}': {ex.Message}");
+                return false;
+            }
+
+            // Currently there is no libwebp binding in this project — the reader still parses
+            // the manifest and flattens the kd-tree, but LoadAsync-driven chunk decodes will
+            // throw when a caller triggers WebP decode. That is intentional (a Track-C4
+            // deliverable is the parse/flatten scaffold + a stub decoder); a real .sog scene
+            // will land alongside the netpyoung/unity.webp plugin in a later track.
+            IWebPDecoder decoder = new NativeWebPDecoder();
+            m_SogChunkLoader = new SogChunkLoader(m_SogManifest.RootDirectory,
+                                                   m_SogManifest.Meta.Filenames, decoder)
+            {
+                CooldownFrames = Mathf.Max(1, cooldownFrames),
+            };
+            m_SogStreamer = new SogStreamer(m_SogChunkLoader, m_SogManifest.Leaves,
+                                             Mathf.Max(1, m_SogManifest.LodLevels))
+            {
+                LodBaseDistance = lodBaseDistance,
+                LodMultiplier   = lodMultiplier,
+            };
+
+            m_ChunkReader = new SogChunkReader(m_SogManifest);
+            return true;
+        }
+
         void Update()
         {
+            // SOG path is a self-contained state machine — the SPZ Addressables loop below
+            // is skipped when the C4 factory routed to SOG. We drive the streamer's Tick
+            // + cooldown here so the loader ages out its unused chunks.
+            if (resolvedFormat == StreamFormat.Sog)
+            {
+                m_Frame++;
+                m_SogChunkLoader?.Tick();
+                return;
+            }
+
             if (cam == null) { cam = Camera.main; if (cam == null) return; }
             m_Frame++;
 
@@ -637,6 +739,15 @@ namespace GsplatLod
 
         void OnDestroy()
         {
+            // Track C4: SOG teardown. Loader disposes its resident SogChunkResource entries;
+            // manifest disposes the persistent NativeArray<SogLeafNode> backing the flat tree.
+            m_SogStreamer?.Dispose(); m_SogStreamer = null;
+            m_SogChunkLoader?.Dispose(); m_SogChunkLoader = null;
+            if (m_ChunkReader is SogChunkReader scr) { scr.Dispose(); m_SogManifest = null; }
+            else m_SogManifest?.Dispose();
+            m_SogManifest = null;
+            m_ChunkReader = null;
+
             if (m_Chunks != null) foreach (var c in m_Chunks) { if (c.hasPen) Addressables.Release(c.penH); if (c.hasCur) Addressables.Release(c.curH); }
             if (m_HasEnvH) Addressables.Release(m_EnvH);
             // B5: release env-tier handles (never released at runtime — cleaned only on teardown).
