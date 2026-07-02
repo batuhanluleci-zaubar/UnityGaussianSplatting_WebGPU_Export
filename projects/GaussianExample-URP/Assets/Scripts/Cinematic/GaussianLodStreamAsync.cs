@@ -113,8 +113,10 @@ namespace GsplatLod
                  "Roughly tune to (max chunk world extent) * 2..3. For ~5-6m chunks (32ch on Festsaal) use ~20-25; for " +
                  "~10m chunks (16ch) use ~12-15. Retune when you re-bake with different --chunks.")]
         public float lodBaseDistance = 15f;
-        [Tooltip("Distance multiplier per LOD band (2-3). Larger = wider bands = sharper transitions but bigger jumps.")]
-        public float lodMultiplier = 2.0f;
+        [Tooltip("Distance multiplier per LOD band (2-3). Larger = wider bands = sharper transitions but bigger jumps. " +
+                 "Default 3.0 matches SuperSplat parity — wider bands keep more near-field chunks at LOD0/1, " +
+                 "which reduces balancer demotion pressure and helps the finest LOD actually reach visible chunks.")]
+        public float lodMultiplier = 3.0f;
         [Tooltip("P0(a) SuperSplat-parity behind-camera penalty. A chunk whose centre is directly behind " +
                  "the camera (barely-visible via AABB overshoot) has its effective distance multiplied by this " +
                  "factor -> picks a coarser LOD. 5 = 5x demotion for straight-behind; 1 = disabled.")]
@@ -263,7 +265,8 @@ namespace GsplatLod
             Debug.Log($"[StreamAsync] manifest loaded: {man.chunks.Length} chunks from '{manifestPath}'");
             if (man.version >= 2) Debug.Log($"[StreamAsync] manifest v2 loaded, filenames={man.filenames?.Length ?? 0}");
             m_Manifest = man;
-            if (lodMultiplier < 1.05f) lodMultiplier = 1.05f;
+            // SuperSplat parity: min-clamp 1.2 (was 1.05 — too flat, made bands nearly identical).
+            if (lodMultiplier < 1.2f) lodMultiplier = 1.2f;
 
             Vector3 mn = Vector3.one * 1e9f, mx = -mn;
             foreach (var cm in man.chunks)
