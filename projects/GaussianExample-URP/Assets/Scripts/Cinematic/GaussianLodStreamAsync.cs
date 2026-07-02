@@ -14,6 +14,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using Unity.Collections;
+using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
@@ -52,6 +54,31 @@ namespace GsplatLod
         SogManifest m_SogManifest;
         SogChunkLoader m_SogChunkLoader;
         SogStreamer m_SogStreamer;
+
+        // Track C4b: persistent per-frame scratch buffer for SogKdTree.WalkVisibleLeaves.
+        // Allocated once at Start() (size = leaf count) so the per-frame walk is zero-alloc
+        // — mirrors how SPZ's m_VisSorted List is reused across frames. Disposed in OnDestroy.
+        NativeArray<int> m_SogVisibleLeafIdx;
+
+        // Track C4b: FPS-throttled asset-assembly queue. Every frame we drain at most one
+        // leaf whose desired-LOD chunk just became resident, decoding its (offset,count)
+        // slice into a NativeArray<InputSplatData> via SogReader.DecodeSlice (or its wrapper).
+        // The queue is populated inside the SOG Update() body from m_SogStreamer's swap
+        // notifications. Runtime InputSplatData -> GaussianSplatAsset materialisation is
+        // out of scope for this pass (it is an editor-only heavy pipeline) — for now we
+        // decode + log + Dispose so the throttle contract is honoured and the never-evict-
+        // visible refcount policy in SogStreamer.ApplyLodChanges is exercised end-to-end.
+        readonly Queue<int> m_SogAssemblyQueue = new Queue<int>();
+
+        // Assembly-pending set — mirrors PlayCanvas engine "assemblyPending" so we don't
+        // enqueue the same leaf twice while the previous decode is still in flight.
+        readonly HashSet<int> m_SogAssemblyPending = new HashSet<int>();
+
+        // Diagnostics: leaves whose desired LOD is now resident vs. total visible (for HUD).
+        int m_SogVisibleLeaves;
+        int m_SogResidentLeaves;
+        int m_SogAssembliesTotal;
+        int m_SogAssembliesThisFrame;
 
         public Camera cam;
         public bool enableEnv = false;
@@ -328,18 +355,26 @@ namespace GsplatLod
             };
 
             m_ChunkReader = new SogChunkReader(m_SogManifest);
+
+            // Track C4b: one-shot allocation of the per-frame visibility scratch buffer.
+            // WalkVisibleLeaves requires outIdx.Length >= leaves.Length.
+            int leafCount = m_SogManifest.Leaves.IsCreated ? m_SogManifest.Leaves.Length : 0;
+            m_SogVisibleLeafIdx = new NativeArray<int>(
+                Mathf.Max(1, leafCount), Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
             return true;
         }
 
         void Update()
         {
             // SOG path is a self-contained state machine — the SPZ Addressables loop below
-            // is skipped when the C4 factory routed to SOG. We drive the streamer's Tick
-            // + cooldown here so the loader ages out its unused chunks.
+            // is skipped when the C4 factory routed to SOG. Track C4b wires the full
+            // per-frame flow here: Loader.Tick -> WalkVisibleLeaves -> ApplyLodChanges
+            // -> throttled asset assembly. Never-evict-visible refcount tracking lives
+            // inside SogStreamer.ApplyLodChanges (pendingDecrements map).
             if (resolvedFormat == StreamFormat.Sog)
             {
                 m_Frame++;
-                m_SogChunkLoader?.Tick();
+                UpdateSog();
                 return;
             }
 
@@ -389,6 +424,141 @@ namespace GsplatLod
             if ((m_Frame - m_LastEvalFrame) < evalInterval && !camMoved) return;
             m_LastEvalFrame = m_Frame; m_LastCamPos = cam.transform.position;
             Evaluate();
+        }
+
+        // ================================================================
+        // Track C4b — SOG per-frame driver
+        // ================================================================
+        //
+        // Flow (mirrors PlayCanvas engine gsplat-octree-instance.js):
+        //   1) Loader.Tick()               -> ages cooldown entries, drops long-idle chunks.
+        //   2) Compute cam pos/fwd + frustum planes (reuses SPZ per-frame cache).
+        //   3) SogKdTree.WalkVisibleLeaves -> writes visible leaf indices into m_SogVisibleLeafIdx.
+        //   4) SogStreamer.ApplyLodChanges -> per-leaf desired-LOD selection, AcquireAsync,
+        //                                    pendingDecrements never-evict-visible policy.
+        //   5) Drain m_SogAssemblyQueue    -> at most one leaf/frame, decode (offset,count) slice.
+        //
+        // The SPZ path is untouched: the whole method is only entered when
+        // resolvedFormat == StreamFormat.Sog.
+        void UpdateSog()
+        {
+            if (m_SogStreamer == null || m_SogChunkLoader == null || m_SogManifest == null)
+                return;
+            if (!m_SogManifest.Leaves.IsCreated || m_SogManifest.Leaves.Length == 0)
+                return;
+            if (cam == null) { cam = Camera.main; if (cam == null) return; }
+
+            // Reset key parity with the SPZ path — free everything and restart from scratch.
+            if (resetKeyEnabled && Input.GetKeyDown(KeyCode.R))
+            {
+                // Drop the assembly backlog; SogStreamer holds no external handles beyond the
+                // loader refcounts which the loader disposes on the next Tick when refs hit zero.
+                m_SogAssemblyQueue.Clear();
+                m_SogAssemblyPending.Clear();
+                Debug.Log("[StreamAsync/SOG] reset — clearing assembly backlog");
+            }
+
+            // Frustum planes + camera vectors mirror what Evaluate() does for SPZ. We reuse
+            // m_Planes so both code paths share the same cached buffer.
+            GeometryUtility.CalculateFrustumPlanes(cam, m_Planes);
+            float3 camPos = cam.transform.position;
+            float3 camFwd = cam.transform.forward;
+
+            // Zero-alloc visibility walk. outIdx.Length was sized to leaf count at Start().
+            int visibleCount = SogKdTree.WalkVisibleLeaves(
+                m_SogManifest.Leaves, camPos, camFwd, m_Planes, m_SogVisibleLeafIdx);
+            m_SogVisibleLeaves = visibleCount;
+
+            // ApplyLodChanges drives the LOD state machine (SelectDesiredLodIndex + AcquireOnce
+            // + pendingDecrements + PrefetchNextLod) and also calls Loader.Tick() internally
+            // for cooldown ageing. That means we do NOT call Loader.Tick() a second time here.
+            m_SogStreamer.ApplyLodChanges(m_SogVisibleLeafIdx, visibleCount, camPos);
+
+            // Enqueue any leaf whose desired-LOD chunk just became resident but has not yet
+            // been assembled into an InputSplatData buffer. Cap the walk cost at O(visible) —
+            // the streamer already made the AcquireAsync calls above, so IsResident is a cheap
+            // dict lookup on the loader.
+            int residentThisFrame = 0;
+            for (int v = 0; v < visibleCount; v++)
+            {
+                int leafIdx = m_SogVisibleLeafIdx[v];
+                if (leafIdx < 0 || leafIdx >= m_SogManifest.Leaves.Length) continue;
+
+                var leaf = m_SogManifest.Leaves[leafIdx];
+                int curLod = m_SogStreamer.GetCurrentLod(leafIdx);
+                if (curLod < 0) continue;   // desired chunk still loading; will retry next frame
+
+                int fileIdx;
+                unsafe { fileIdx = leaf.LodFileIdx[curLod]; }
+                if (!m_SogChunkLoader.IsResident(fileIdx)) continue;
+
+                residentThisFrame++;
+                if (m_SogAssemblyPending.Add(leafIdx))
+                    m_SogAssemblyQueue.Enqueue(leafIdx);
+            }
+            m_SogResidentLeaves = residentThisFrame;
+
+            // FPS-throttled asset assembly. One leaf per frame keeps the frame budget bounded
+            // (WebP decode already ran off-thread inside the loader; the DecodeSlice jobs are
+            // Burst-scheduled and Complete() inside the call). Even at 1 leaf/frame that is
+            // 60 leaves/sec at 60 FPS — enough to fill a typical SuperSplat kd-tree (~1K
+            // leaves) in ~17 seconds cold, which matches SuperSplat's own progressive-refine.
+            m_SogAssembliesThisFrame = 0;
+            const int kMaxAssembliesPerFrame = 1;
+            while (m_SogAssembliesThisFrame < kMaxAssembliesPerFrame && m_SogAssemblyQueue.Count > 0)
+            {
+                int leafIdx = m_SogAssemblyQueue.Dequeue();
+                m_SogAssemblyPending.Remove(leafIdx);
+
+                if (leafIdx < 0 || leafIdx >= m_SogManifest.Leaves.Length) continue;
+                var leaf = m_SogManifest.Leaves[leafIdx];
+                int curLod = m_SogStreamer.GetCurrentLod(leafIdx);
+                if (curLod < 0 || curLod >= leaf.LodCount) continue;
+
+                int fileIdx; int offset; int count;
+                unsafe
+                {
+                    fileIdx = leaf.LodFileIdx[curLod];
+                    offset  = leaf.LodOffset[curLod];
+                    count   = leaf.LodSplatCount[curLod];
+                }
+                if (count <= 0) continue;
+                if (!m_SogChunkLoader.IsResident(fileIdx))
+                {
+                    // Raced against a cooldown-driven eviction — put it back for a later frame.
+                    if (m_SogAssemblyPending.Add(leafIdx)) m_SogAssemblyQueue.Enqueue(leafIdx);
+                    continue;
+                }
+
+                // Runtime InputSplatData -> GaussianSplatAsset materialisation is out of scope
+                // for this pass (the editor pipeline in GaussianSplatAssetCreator is heavy —
+                // Morton reorder, chunk data, format conversion, texture writes). For now we
+                // decode-then-dispose so the Burst pipeline is exercised end-to-end and the
+                // never-evict-visible refcount policy in SogStreamer sees a real consumer.
+                // The renderer-hook is the next track's deliverable (Track C4c).
+                try
+                {
+                    var chunk = m_SogChunkLoader.GetChunkResource(fileIdx);
+                    if (chunk == null) continue;
+
+                    var splats = new NativeArray<InputSplatData>(
+                        count, Allocator.Persistent, NativeArrayOptions.ClearMemory);
+                    try
+                    {
+                        SogReader.DecodeChunkSliceForStreamer(chunk, offset, count, splats);
+                        m_SogAssembliesTotal++;
+                        m_SogAssembliesThisFrame++;
+                    }
+                    finally
+                    {
+                        splats.Dispose();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[StreamAsync/SOG] assemble leaf {leafIdx} lod {curLod} chunk {fileIdx} failed: {ex.Message}");
+                }
+            }
         }
 
         void PollLoads()
@@ -743,6 +913,11 @@ namespace GsplatLod
             // manifest disposes the persistent NativeArray<SogLeafNode> backing the flat tree.
             m_SogStreamer?.Dispose(); m_SogStreamer = null;
             m_SogChunkLoader?.Dispose(); m_SogChunkLoader = null;
+            // Track C4b: the per-frame visibility scratch buffer is owned by this component.
+            if (m_SogVisibleLeafIdx.IsCreated) m_SogVisibleLeafIdx.Dispose();
+            m_SogVisibleLeafIdx = default;
+            m_SogAssemblyQueue.Clear();
+            m_SogAssemblyPending.Clear();
             if (m_ChunkReader is SogChunkReader scr) { scr.Dispose(); m_SogManifest = null; }
             else m_SogManifest?.Dispose();
             m_SogManifest = null;
@@ -766,6 +941,21 @@ namespace GsplatLod
             if (!showHud) return;
             var style = new GUIStyle(GUI.skin.label) { fontSize = 17 }; style.normal.textColor = Color.white;
             var sb = new StringBuilder();
+            // Track C4b: SOG has its own accounting — different from the SPZ Addressables HUD
+            // (no Addressables handles, no pool slots, no env tier). Show the numbers that
+            // the streamer actually tracks so play-verify has a live signal.
+            if (resolvedFormat == StreamFormat.Sog)
+            {
+                int leaves = m_SogManifest != null && m_SogManifest.Leaves.IsCreated
+                    ? m_SogManifest.Leaves.Length : 0;
+                int tracked = m_SogChunkLoader != null ? m_SogChunkLoader.TrackedChunkCount : 0;
+                sb.AppendLine($"GaussianLodStreamAsync (SOG)  leaves={leaves}  visible={m_SogVisibleLeaves}  " +
+                              $"desiredResident={m_SogResidentLeaves}  chunksTracked={tracked}  " +
+                              $"assemblies(total/last)={m_SogAssembliesTotal}/{m_SogAssembliesThisFrame}  " +
+                              $"queue={m_SogAssemblyQueue.Count}");
+                GUI.Label(new Rect(12, 10, 1600, 60), sb.ToString(), style);
+                return;
+            }
             sb.AppendLine($"GaussianLodStreamAsync (Addressables)  resident={m_ResidentSplats / 1000}K / budget={deviceBudget / 1000}K  slots={m_ResidentChunks}/{maxResidentChunks} of {m_Chunks.Count}  visible={m_VisibleChunks}");
             int pending = 0; int noResident = 0;
             foreach (var c in m_Chunks) { if (c.hasPen) pending++; if (c.visible && !c.hasCur) noResident++; }

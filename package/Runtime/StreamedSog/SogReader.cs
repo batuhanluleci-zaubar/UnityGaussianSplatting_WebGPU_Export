@@ -253,6 +253,32 @@ namespace GaussianSplatting.Runtime.StreamedSog
         // ---------------------------------------------------------------------
 
         /// <summary>
+        /// Track C4b: public shim so <see cref="GsplatLod.GaussianLodStreamAsync"/> can
+        /// drive the same Burst decode pipeline as <see cref="ReadLeafLod"/> without
+        /// having to await the loader (it already ensured residency and holds the
+        /// refcount). Caller owns <paramref name="output"/> and MUST size it to
+        /// <paramref name="count"/> splats. Throws if the resource is missing
+        /// required buffers (means_l/u, meta) rather than silently producing
+        /// zero-splat output.
+        /// </summary>
+        public static void DecodeChunkSliceForStreamer(
+            SogChunkResource resource, int offset, int count,
+            NativeArray<InputSplatData> output)
+        {
+            if (resource == null)
+                throw new ArgumentNullException(nameof(resource));
+            if (offset < 0 || count < 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(offset), $"SogReader.DecodeChunkSliceForStreamer: offset {offset} count {count} must be non-negative");
+            if (!output.IsCreated || output.Length < count)
+                throw new ArgumentException(
+                    $"SogReader.DecodeChunkSliceForStreamer: output NativeArray must be created with length >= {count} (has {output.Length}).",
+                    nameof(output));
+
+            DecodeSlice(resource, offset, count, output);
+        }
+
+        /// <summary>
         /// Schedules the five Burst decode jobs (means / quats / scales / sh0
         /// and, when present, shN) writing splat rows into <paramref name="output"/>.
         /// The caller owns <paramref name="output"/> and passes count = slice length.
