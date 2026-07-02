@@ -55,6 +55,16 @@ namespace GaussianSplatting.Runtime.StreamedSog
         int m_CurrentFrame;
 
         /// <summary>
+        /// Track C4b fail-loud gate: if the runtime WebP decoder probe fails at
+        /// construction we do not swallow the error — every subsequent AcquireAsync
+        /// throws synchronously so the streamer surfaces the config problem
+        /// immediately instead of silently dropping to a black scene.
+        /// </summary>
+        readonly bool m_WebPUnavailable;
+
+        static bool s_LoggedProbeFailureOnce;
+
+        /// <summary>
         /// Construct a loader rooted at <paramref name="rootDirectory"/>. Each entry
         /// in <paramref name="filenames"/> is treated as either an absolute path or
         /// a path relative to <paramref name="rootDirectory"/> — resolved on LoadAsync.
@@ -64,6 +74,22 @@ namespace GaussianSplatting.Runtime.StreamedSog
             m_RootDirectory = rootDirectory ?? string.Empty;
             m_Filenames = filenames ?? Array.Empty<string>();
             m_Decoder = decoder ?? throw new ArgumentNullException(nameof(decoder));
+
+            // Track C4b: probe libwebp exactly once per process. NativeWebPDecoder
+            // caches the result internally so repeated calls are cheap. Non-native
+            // decoders (unit-test fakes, WebGL bridges) can bypass the probe by not
+            // implementing IWebPDecoderProbe — in that case we assume they work.
+            if (decoder is NativeWebPDecoder native && !native.Probe())
+            {
+                m_WebPUnavailable = true;
+                if (!s_LoggedProbeFailureOnce)
+                {
+                    s_LoggedProbeFailureOnce = true;
+                    Debug.LogError(
+                        "[SOG] libwebp not available; SOG streaming will fail. " +
+                        "Ensure com.netpyoung.webp resolves and native binaries deployed.");
+                }
+            }
         }
 
         /// <summary>
@@ -74,6 +100,12 @@ namespace GaussianSplatting.Runtime.StreamedSog
         /// </summary>
         public Task<SogChunkResource> AcquireAsync(int fileIdx)
         {
+            if (m_WebPUnavailable)
+                throw new InvalidOperationException(
+                    "SogChunkLoader.AcquireAsync: libwebp probe failed at construction — " +
+                    "com.netpyoung.webp is missing or its native binaries did not deploy. " +
+                    "See earlier '[SOG] libwebp not available' error.");
+
             if (fileIdx < 0 || fileIdx >= m_Filenames.Length)
                 return Task.FromException<SogChunkResource>(
                     new ArgumentOutOfRangeException(nameof(fileIdx),

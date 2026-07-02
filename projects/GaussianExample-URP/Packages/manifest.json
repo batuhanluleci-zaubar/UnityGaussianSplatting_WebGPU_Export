@@ -1,6 +1,16 @@
 {
+  "scopedRegistries": [
+    {
+      "name": "OpenUPM",
+      "url": "https://package.openupm.com",
+      "scopes": [
+        "com.netpyoung"
+      ]
+    }
+  ],
   "dependencies": {
     "com.coplaydev.unity-mcp": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main",
+    "com.netpyoung.webp": "0.3.22",
     "com.unity.addressables": "3.1.0",
     "com.unity.cinemachine": "3.1.7",
     "com.unity.nuget.newtonsoft-json": "3.2.2",
