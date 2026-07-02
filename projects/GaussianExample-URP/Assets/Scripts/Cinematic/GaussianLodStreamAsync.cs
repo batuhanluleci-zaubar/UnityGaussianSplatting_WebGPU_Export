@@ -123,7 +123,19 @@ namespace GsplatLod
         readonly List<Chunk> m_Chunks = new List<Chunk>();
         GaussianSplatRenderer[] m_Pool;
         int[] m_SlotChunk;
+        // v1 single-env legacy path (kept for backward compat / when environment{} block absent).
         GaussianSplatRenderer m_Env; AsyncOperationHandle<GaussianSplatAsset> m_EnvH; bool m_HasEnvH; int m_EnvCount;
+
+        // B5: env tier — parallel queue that lives outside the LOD budget balancer.
+        // These are the "sky/far background" chunks: loaded ONCE at Start(), never evicted,
+        // never LOD-switched, excluded from m_VisSorted so the balancer can't demote them.
+        // Fixed-size renderer pool (== env chunk count) — NOT bounded by maxResidentChunks.
+        LodManifest m_Manifest;
+        GaussianSplatRenderer[] m_EnvPool;
+        AsyncOperationHandle<GaussianSplatAsset>[] m_EnvH2;
+        bool[] m_EnvH2Valid;
+        int m_EnvResidentSplats;
+        int m_EnvChunkCount;
 
         int m_Frame, m_Eval, m_LastEvalFrame = -9999, m_ResidentSplats, m_ResidentChunks, m_VisibleChunks, m_InFlight;
         float m_BudgetScale = 1f;
@@ -165,19 +177,29 @@ namespace GsplatLod
             manifestPath = LodManifestResolver.Resolve(manifestPath, "[StreamAsync]");
             if (manifestPath == null) { enabled = false; return; }
             var man = JsonUtility.FromJson<LodManifest>(File.ReadAllText(manifestPath));
-            if (man == null || man.chunks == null) { Debug.LogError("[StreamAsync] manifest parse failed"); enabled = false; return; }
+            // B4: fail-hard version+shape validation. JsonUtility silently drops unknown fields,
+            // so an unversioned or too-new payload would blackhole every chunk on an older reader.
+            if (!LodManifestValidator.Validate(man, "[StreamAsync]", out var vErr))
+            { Debug.LogError(vErr); enabled = false; return; }
             Debug.Log($"[StreamAsync] manifest loaded: {man.chunks.Length} chunks from '{manifestPath}'");
+            if (man.version >= 2) Debug.Log($"[StreamAsync] manifest v2 loaded, filenames={man.filenames?.Length ?? 0}");
+            m_Manifest = man;
             if (lodMultiplier < 1.05f) lodMultiplier = 1.05f;
 
             Vector3 mn = Vector3.one * 1e9f, mx = -mn;
             foreach (var cm in man.chunks)
             {
                 var c = new Chunk { meta = cm };
-                var bmin = new Vector3(cm.boundMin[0], cm.boundMin[1], cm.boundMin[2]);
-                var bmax = new Vector3(cm.boundMax[0], cm.boundMax[1], cm.boundMax[2]);
-                c.localCentre = (bmin + bmax) * 0.5f; c.localSize = bmax - bmin;
+                // B3: v2 -> ellipsoid extents; v1 -> legacy percentile AABB (safe superset).
+                LodManifestValidator.ResolveChunkBounds(man, cm, out var bmin, out var bmax);
+                c.localCentre = (cm.centre != null && cm.centre.Length == 3)
+                    ? new Vector3(cm.centre[0], cm.centre[1], cm.centre[2])
+                    : (bmin + bmax) * 0.5f;
+                c.localSize = bmax - bmin;
                 c.addr = new string[cm.lods.Length]; c.splatCount = new int[cm.lods.Length];
-                for (int L = 0; L < cm.lods.Length; L++) { c.addr[L] = Path.GetFileNameWithoutExtension(cm.lods[L].file); c.splatCount[L] = cm.lods[L].splatCount; }
+                // B2: v2 -> filenames[fileIdx]; v1 -> per-leaf .file string.
+                for (int L = 0; L < cm.lods.Length; L++)
+                { c.addr[L] = LodManifestValidator.ResolveAddr(man, cm.lods[L]); c.splatCount[L] = cm.lods[L].splatCount; }
                 mn = Vector3.Min(mn, bmin); mx = Vector3.Max(mx, bmax);
                 m_Chunks.Add(c);
             }
@@ -191,13 +213,12 @@ namespace GsplatLod
                 m_Pool[i] = go.AddComponent<GaussianSplatRenderer>(); m_SlotChunk[i] = -1;
             }
 
-            if (enableEnv && !string.IsNullOrEmpty(man.envFile))
-            {
-                var envGo = new GameObject("Env"); envGo.SetActive(false); envGo.transform.SetParent(transform, false);
-                m_Env = envGo.AddComponent<GaussianSplatRenderer>();
-                m_EnvH = Addressables.LoadAssetAsync<GaussianSplatAsset>(Path.GetFileNameWithoutExtension(man.envFile)); m_HasEnvH = true;
-                m_EnvH.Completed += op => { if (op.Status == AsyncOperationStatus.Succeeded && m_Env != null) { m_Env.m_Asset = op.Result; m_EnvCount = op.Result.splatCount; m_Env.gameObject.SetActive(true); } };
-            }
+            // B5: env tier. Loads once at Start() from environment.files[] (v2) or envFile (v1),
+            // never released, never LOD-switched, never counted in the LOD budget balancer.
+            // Env chunks are excluded from m_VisSorted (never demoted) and from scene-bounds
+            // accumulation (a whole-scene env would blow up m_SceneRadius and push the auto-tune
+            // at line ~209 too far, breaking near-field LOD bands).
+            SetupEnvTier(man);
 
             m_SceneCentre = (mn + mx) * 0.5f; m_SceneRadius = (mx - mn).magnitude * 0.5f;
             // Auto-tune the LOD bands to the scene scale ONLY IF the user left it at the default 15
@@ -399,6 +420,62 @@ namespace GsplatLod
             return -1;
         }
 
+        void SetupEnvTier(LodManifest man)
+        {
+            if (!enableEnv) return;
+            // v2 path: environment.files[] can hold multiple env assets (curated far background).
+            // v1 path: single top-level envFile string. In both cases the pool sizes to the count,
+            // is not bounded by maxResidentChunks, and each asset stays resident forever.
+            List<string> envAddrs = new List<string>(4);
+            if (man.version >= 2 && man.environment != null && man.environment.files != null && man.environment.files.Length > 0)
+            {
+                for (int i = 0; i < man.environment.files.Length; i++)
+                {
+                    string a = null;
+                    if (man.environment.fileIdx != null && i < man.environment.fileIdx.Length
+                        && man.filenames != null && man.environment.fileIdx[i] < man.filenames.Length)
+                        a = Path.GetFileNameWithoutExtension(man.filenames[man.environment.fileIdx[i]]);
+                    else
+                        a = Path.GetFileNameWithoutExtension(man.environment.files[i]);
+                    if (!string.IsNullOrEmpty(a)) envAddrs.Add(a);
+                }
+            }
+            else if (!string.IsNullOrEmpty(man.envFile))
+            {
+                envAddrs.Add(Path.GetFileNameWithoutExtension(man.envFile));
+            }
+            if (envAddrs.Count == 0) return;
+
+            m_EnvChunkCount = envAddrs.Count;
+            m_EnvPool = new GaussianSplatRenderer[m_EnvChunkCount];
+            m_EnvH2 = new AsyncOperationHandle<GaussianSplatAsset>[m_EnvChunkCount];
+            m_EnvH2Valid = new bool[m_EnvChunkCount];
+
+            for (int i = 0; i < m_EnvChunkCount; i++)
+            {
+                var go = new GameObject("Env_" + i); go.SetActive(false); go.transform.SetParent(transform, false);
+                m_EnvPool[i] = go.AddComponent<GaussianSplatRenderer>();
+                int idx = i;
+                m_EnvH2[i] = Addressables.LoadAssetAsync<GaussianSplatAsset>(envAddrs[i]);
+                m_EnvH2Valid[i] = true;
+                m_EnvH2[i].Completed += op =>
+                {
+                    if (op.Status == AsyncOperationStatus.Succeeded && m_EnvPool != null && idx < m_EnvPool.Length && m_EnvPool[idx] != null)
+                    {
+                        m_EnvPool[idx].m_Asset = op.Result;
+                        m_EnvResidentSplats += op.Result.splatCount;
+                        m_EnvPool[idx].gameObject.SetActive(true);
+                    }
+                    else if (op.Status == AsyncOperationStatus.Failed)
+                    {
+                        Debug.LogError($"[StreamAsync] env asset load FAILED idx={idx} ex={op.OperationException}");
+                    }
+                };
+            }
+            // Legacy m_HasEnvH stays false — the new env tier owns the accounting.
+            Debug.Log($"[StreamAsync] env tier: {m_EnvChunkCount} always-resident asset(s) queued");
+        }
+
         void Evaluate()
         {
             m_Eval++;
@@ -437,20 +514,25 @@ namespace GsplatLod
             m_VisibleChunks = m_VisSorted.Count;
             m_VisSorted.Sort((a, b) => m_Chunks[a].dist.CompareTo(m_Chunks[b].dist));
 
-            long total = m_HasEnvH ? m_EnvCount : 0;
+            // B5: env-tier splats are a fixed always-resident floor, tracked separately from
+            // the LOD budget balancer. The balancer's ceiling is (deviceBudget - envFloor) so
+            // LOD chunks never fight the env tier for slots.
+            long envFloor = (m_HasEnvH ? m_EnvCount : 0) + m_EnvResidentSplats;
+            long lodBudget = (deviceBudget > 0) ? System.Math.Max(1, (long)deviceBudget - envFloor) : 0;
+            long total = 0;
             for (int i = 0; i < m_Chunks.Count; i++) m_Chunks[i].desired = m_Chunks[i].optimal;
             for (int k = 0; k < m_VisSorted.Count; k++) { var c = m_Chunks[m_VisSorted[k]]; total += c.splatCount[c.desired]; }
-            if (deviceBudget > 0 && total > deviceBudget && !forceMaxQuality)
+            if (lodBudget > 0 && total > lodBudget && !forceMaxQuality)
             {
                 for (int b = 0; b < kBuckets; b++) m_Bucket[b].Clear();
                 float invMax = (kBuckets - 1) / Mathf.Sqrt(maxDist);
                 for (int k = 0; k < m_VisSorted.Count; k++) { int i = m_VisSorted[k]; m_Bucket[Mathf.Clamp((int)(Mathf.Sqrt(m_Chunks[i].dist) * invMax), 0, kBuckets - 1)].Add(i); }
                 int guard = m_VisSorted.Count * 8; bool moved = true;
-                while (total > deviceBudget && moved && guard-- > 0)
+                while (total > lodBudget && moved && guard-- > 0)
                 {
                     moved = false;
-                    for (int b = kBuckets - 1; b >= 0 && total > deviceBudget; b--)
-                        foreach (int i in m_Bucket[b]) { var c = m_Chunks[i]; int K1 = c.addr.Length - 1; if (c.desired < K1) { total += c.splatCount[c.desired + 1] - c.splatCount[c.desired]; c.desired++; moved = true; if (total <= deviceBudget) break; } }
+                    for (int b = kBuckets - 1; b >= 0 && total > lodBudget; b--)
+                        foreach (int i in m_Bucket[b]) { var c = m_Chunks[i]; int K1 = c.addr.Length - 1; if (c.desired < K1) { total += c.splatCount[c.desired + 1] - c.splatCount[c.desired]; c.desired++; moved = true; if (total <= lodBudget) break; } }
                 }
             }
 
@@ -501,12 +583,12 @@ namespace GsplatLod
                 }
             }
 
-            int resident = m_HasEnvH ? m_EnvCount : 0, rc = 0;
+            int resident = (int)envFloor; int rc = 0;
             for (int i = 0; i < m_Chunks.Count; i++) { var c = m_Chunks[i]; if (c.slot >= 0 && c.hasCur) { resident += c.splatCount[c.curLevel]; rc++; } }
             m_ResidentSplats = resident; m_ResidentChunks = rc;
-            if (deviceBudget > 0)
+            if (lodBudget > 0)
             {
-                float ratio = (float)total / deviceBudget;
+                float ratio = (float)total / lodBudget;
                 if (ratio < 1f - kBudgetDeadZone || ratio > 1f + kBudgetDeadZone)
                 { float target = 1f / Mathf.Sqrt(Mathf.Max(ratio, 1e-3f)); m_BudgetScale = Mathf.Clamp(m_BudgetScale * (1f + (target - 1f) * kBudgetBlend), 0.05f, 1f); }
             }
@@ -557,6 +639,12 @@ namespace GsplatLod
         {
             if (m_Chunks != null) foreach (var c in m_Chunks) { if (c.hasPen) Addressables.Release(c.penH); if (c.hasCur) Addressables.Release(c.curH); }
             if (m_HasEnvH) Addressables.Release(m_EnvH);
+            // B5: release env-tier handles (never released at runtime — cleaned only on teardown).
+            if (m_EnvH2 != null)
+            {
+                for (int i = 0; i < m_EnvH2.Length; i++)
+                    if (m_EnvH2Valid != null && m_EnvH2Valid[i]) { Addressables.Release(m_EnvH2[i]); m_EnvH2Valid[i] = false; }
+            }
             // B3: drain cooldown map
             foreach (var kv in m_Cooldown) if (kv.Value.valid) Addressables.Release(kv.Value.h);
             m_Cooldown.Clear();
@@ -573,7 +661,8 @@ namespace GsplatLod
             string modeTag = forceMaxQuality ? "★ FULL QUALITY (all LOD0)"
                              : slowMotionDemo ? "SLOW-MO demo — [R] reset"
                              : "streaming — [F] toggle full quality, [R] reset";
-            sb.AppendLine($"streaming: inFlight={pending}  cooldown={m_Cooldown.Count}  noResident(visible)={noResident}  budgetScale={m_BudgetScale:F2}  env={(enableEnv ? m_EnvCount / 1000 + "K" : "off")}   {modeTag}");
+            int envK = (m_EnvCount + m_EnvResidentSplats) / 1000;
+            sb.AppendLine($"streaming: inFlight={pending}  cooldown={m_Cooldown.Count}  noResident(visible)={noResident}  budgetScale={m_BudgetScale:F2}  env={(enableEnv ? envK + "K (" + m_EnvChunkCount + ")" : "off")}   {modeTag}");
 
             // Per-LOD histogram (columns: LOD0 fine .. LODn coarse) — WATCH chunks climb from coarse
             // to fine as SuperSplat's "progressive refinement" streams in.
