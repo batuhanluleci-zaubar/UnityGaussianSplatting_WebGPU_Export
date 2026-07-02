@@ -1772,6 +1772,14 @@ namespace GaussianSplatting.Runtime
             bool haveOutliers = m_OthersIndices.Count > 0;
             bool needOutlierResort = haveOutliers && ShouldResortOutliers(camPosition);
 
+            // Slice 4 / Rank 2: skip Task[] alloc + Task.Run entirely when there is nothing to spawn.
+            // Camera-orbit-heavy sequences below the angular threshold hit this frequently; a
+            // significant fraction of chunks have sortNodeCount==0 && no outlier resort pending
+            // and were previously walking into the parallel pipeline just to allocate an empty
+            // Task[] and return.
+            if (sortNodeCount == 0 && !needOutlierResort)
+                return null;
+
             // Always run outlier sorting on a background task when needed
             Task CreateOutlierTaskIfNeeded()
             {
