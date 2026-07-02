@@ -140,6 +140,13 @@ namespace GsplatLod
                  "a cooldown for this many frames before Release. On repeated camera dither across a LOD " +
                  "boundary, the handle is reused instead of triggering a bundle reload.")]
         public int cooldownFrames = 100;
+        [Tooltip("B4: Very-near instant-LOD bypass. When a chunk is first acquired AND its distance from camera " +
+                 "is below (lodBaseDistance * veryNearFraction), skip the coarse-first / stagedPrefetch ramp " +
+                 "and load its optimal LOD (typically 0) directly on the first Evaluate. Without this, near " +
+                 "chunks need ~4 Evaluates = ~700-850ms at 60 FPS to climb from LOD4 -> LOD0 (one step per " +
+                 "evalEveryNFrames=10 cycle), which is why the finest LOD often 'never opens' during a " +
+                 "continuous cinematic pan. 0 = disabled (old ramp behavior).")]
+        [Range(0f, 1f)] public float veryNearFraction = 0.5f;
 
         [Header("Full-quality shortcut")]
         [Tooltip("Press this key in play mode to toggle FORCE-MAX-QUALITY: every visible chunk is pinned to " +
@@ -838,7 +845,13 @@ namespace GsplatLod
                 // B2: staged prefetch — request the coarsest LOD first (guaranteed instant image),
                 // then let the refine loop step one level finer per Evaluate. Force-max skips the
                 // ramp and loads the target level (LOD0) directly.
-                int initialLevel = forceMaxQuality ? c.desired
+                // B4: very-near bypass — chunks within (lodBaseDistance * veryNearFraction) skip the
+                // ramp too, so the finest LOD reaches near-camera chunks in a single Addressables
+                // load instead of 4 sequential Evaluate cycles (~700ms). Preserves staged-prefetch
+                // for the bulk of the scene (mid/far chunks still ramp coarse->fine to protect the
+                // loader queue on scene enter).
+                bool veryNear = veryNearFraction > 0f && c.dist < lodBaseDistance * veryNearFraction;
+                int initialLevel = (forceMaxQuality || veryNear) ? c.desired
                                  : ((coarseFirst || stagedPrefetch) ? c.addr.Length - 1 : c.desired);
                 StartLoad(c, initialLevel); m_InFlight++;
             }
