@@ -40,6 +40,18 @@ namespace GsplatLod
     {
         public static string Resolve(string savedPath, string logTag)
         {
+            // A1: FIRST try StreamingAssets — this is the only path that works in a Standalone build.
+            // Accepts either a relative subpath ("gsplat_lod/uhq/manifest.json") OR a filename that
+            // exists under Application.streamingAssetsPath at any depth.
+            if (!string.IsNullOrEmpty(savedPath) && !Path.IsPathRooted(savedPath))
+            {
+                var saPath = Path.Combine(Application.streamingAssetsPath, savedPath);
+                if (File.Exists(saPath))
+                {
+                    Debug.Log($"{logTag} manifest resolved via StreamingAssets: '{saPath}'");
+                    return saPath;
+                }
+            }
             if (!string.IsNullOrEmpty(savedPath) && File.Exists(savedPath)) return savedPath;
             string outDir = null;
             if (!string.IsNullOrEmpty(savedPath))

@@ -1,0 +1,3217 @@
+{
+  "version": 1,
+  "scene": "Festsaal_10m_bereinigt",
+  "chunkCount": 64,
+  "lodLevels": 5,
+  "voxel0": 0.05,
+  "lodMult": 2.0,
+  "chunks": [
+    {
+      "id": 0,
+      "boundMin": [
+        -17.93568872332573,
+        -2.0970534694194787,
+        -6.652278078794479
+      ],
+      "boundMax": [
+        -14.10982397198677,
+        2.9314357936382294,
+        0.9841701686382294
+      ],
+      "centre": [
+        -16.022756347656248,
+        0.41719116210937535,
+        -2.834053955078125
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c0_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 92358
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c0_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 15067
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c0_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 5045
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c0_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1552
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c0_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 594
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "boundMin": [
+        1.2756468975543975,
+        -3.2138550555706025,
+        -14.381460036039352
+      ],
+      "boundMax": [
+        12.214951246976852,
+        1.0967871844768524,
+        0.9681250751018524
+      ],
+      "centre": [
+        6.745299072265625,
+        -1.058533935546875,
+        -6.70666748046875
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c1_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 85508
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c1_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 20938
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c1_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 8159
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c1_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 3035
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c1_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 1209
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "boundMin": [
+        -14.050472394526004,
+        2.748743914067745,
+        -7.764023419916629
+      ],
+      "boundMax": [
+        1.251572248041633,
+        5.333287335932255,
+        -6.677454851567745
+      ],
+      "centre": [
+        -6.3994500732421855,
+        4.041015625,
+        -7.220739135742187
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c2_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 99302
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c2_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 19047
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c2_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 6277
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c2_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1866
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c2_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 535
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "boundMin": [
+        5.854336351156235,
+        -0.7467378675937653,
+        0.7598539292812347
+      ],
+      "boundMax": [
+        7.069735914468765,
+        3.2023042738437653,
+        8.159823805093765
+      ],
+      "centre": [
+        6.4620361328125,
+        1.227783203125,
+        4.4598388671875
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c3_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 100408
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c3_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 11931
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c3_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 3456
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c3_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 849
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c3_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 216
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "boundMin": [
+        12.022913835942745,
+        -2.125570050776005,
+        -7.9275720039010045
+      ],
+      "boundMax": [
+        15.783238507807255,
+        3.062291242182255,
+        -5.907679460942745
+      ],
+      "centre": [
+        13.903076171875,
+        0.46836059570312494,
+        -6.917625732421875
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c4_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 94754
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c4_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 16579
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c4_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 5329
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c4_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1777
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c4_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 587
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "boundMin": [
+        -24.85079858660698,
+        -3.0459938991069793,
+        0.7868259251117706
+      ],
+      "boundMax": [
+        -14.95235326886177,
+        2.9291677272319774,
+        9.902800539731977
+      ],
+      "centre": [
+        -19.901575927734378,
+        -0.05841308593750094,
+        5.344813232421874
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c5_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 95610
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c5_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 18311
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c5_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 7247
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c5_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2725
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c5_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 1044
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "boundMin": [
+        -24.037813133597375,
+        2.702033057808876,
+        0.608355079293251
+      ],
+      "boundMax": [
+        -13.036505714058876,
+        7.887322410941124,
+        9.859662498831746
+      ],
+      "centre": [
+        -18.537159423828125,
+        5.294677734375,
+        5.234008789062498
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c6_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 101503
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c6_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 33184
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c6_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 11120
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c6_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2914
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c6_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 813
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "boundMin": [
+        4.908455828130245,
+        3.079066179692745,
+        0.7350720390677452
+      ],
+      "boundMax": [
+        13.001256085932255,
+        5.888707257807255,
+        7.689976789057255
+      ],
+      "centre": [
+        8.95485595703125,
+        4.48388671875,
+        4.2125244140625
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c7_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 94322
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c7_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 19424
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c7_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 5022
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c7_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1207
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c7_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 285
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "boundMin": [
+        -7.708910405635834,
+        -2.816625249385834,
+        -14.834838140010834
+      ],
+      "boundMax": [
+        1.1233147025108394,
+        1.0304436087608337,
+        1.0001701712608337
+      ],
+      "centre": [
+        -3.292797851562497,
+        -0.8930908203125001,
+        -6.917333984375
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c8_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 98040
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c8_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 16411
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c8_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 5764
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c8_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1848
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c8_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 600
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "boundMin": [
+        1.0931542217731476,
+        3.0394432842731476,
+        -7.655551832914353
+      ],
+      "boundMax": [
+        12.226181715726852,
+        6.269638746976852,
+        -5.835830003023148
+      ],
+      "centre": [
+        6.65966796875,
+        4.654541015625,
+        -6.74569091796875
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c9_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 86673
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c9_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 26797
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c9_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 8998
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c9_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2342
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c9_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 592
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "boundMin": [
+        15.649562112987041,
+        -1.9887630823254585,
+        -7.4327132776379585
+      ],
+      "boundMax": [
+        18.60141444951296,
+        2.7674300745129585,
+        -6.0653335973620415
+      ],
+      "centre": [
+        17.12548828125,
+        0.38933349609375,
+        -6.7490234375
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c10_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 92599
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c10_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 11111
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c10_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 3677
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c10_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1221
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c10_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 402
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "boundMin": [
+        -8.071028165519238,
+        -1.1909256264567376,
+        0.8020187094807625
+      ],
+      "boundMax": [
+        0.3679031655192375,
+        1.5473465248942375,
+        8.139875821769238
+      ],
+      "centre": [
+        -3.8515625,
+        0.17821044921874996,
+        4.470947265625
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c11_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 100187
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c11_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 15043
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c11_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 4577
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c11_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1309
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c11_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 352
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "boundMin": [
+        5.31032716602087,
+        -1.0057568183541299,
+        8.007532976567745
+      ],
+      "boundMax": [
+        11.251643048822878,
+        3.222935773432255,
+        9.015416242182255
+      ],
+      "centre": [
+        8.280985107421873,
+        1.1085894775390623,
+        8.511474609375
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c12_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 82569
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c12_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 16055
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c12_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 5015
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c12_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1277
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c12_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 368
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "boundMin": [
+        -14.539764386713506,
+        5.171107195317745,
+        -7.662144757807255
+      ],
+      "boundMax": [
+        -6.161341570317745,
+        6.417515851557255,
+        0.8017931953072548
+      ],
+      "centre": [
+        -10.350552978515626,
+        5.7943115234375,
+        -3.43017578125
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c13_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 107170
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c13_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 26386
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c13_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 7983
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c13_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1908
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c13_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 479
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "boundMin": [
+        -6.5046219155192375,
+        2.7790694907307625,
+        0.6567550376057625
+      ],
+      "boundMax": [
+        1.2695144936442375,
+        6.3190750405192375,
+        3.159839200675485
+      ],
+      "centre": [
+        -2.6175537109375,
+        4.549072265625,
+        1.9082971191406237
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c14_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 96925
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c14_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 18595
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c14_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 4785
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c14_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1145
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c14_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 269
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "boundMin": [
+        1.1347265392541885,
+        5.7016210705041885,
+        0.7392187267541885
+      ],
+      "boundMax": [
+        11.960000023245811,
+        6.7820215076208115,
+        8.941645531058313
+      ],
+      "centre": [
+        6.54736328125,
+        6.2418212890625,
+        4.840432128906251
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c15_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 102043
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c15_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 28265
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c15_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 7741
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c15_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2016
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c15_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 494
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "boundMin": [
+        1.2058871176838875,
+        1.6172042563557625,
+        -10.235294522941112
+      ],
+      "boundMax": [
+        11.468917569816114,
+        3.2734207436442375,
+        -6.8386398032307625
+      ],
+      "centre": [
+        6.337402343750001,
+        2.4453125,
+        -8.536967163085937
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c16_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 95306
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c16_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 11354
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c16_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 3396
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c16_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1023
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c16_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 283
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "boundMin": [
+        13.460597269237041,
+        -0.10847499638795854,
+        0.7533218786120415
+      ],
+      "boundMax": [
+        14.605320699512959,
+        3.1966292932629585,
+        8.156590230762959
+      ],
+      "centre": [
+        14.032958984375,
+        1.5440771484375,
+        4.4549560546875
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c17_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 103334
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c17_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 10201
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c17_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 2763
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c17_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 646
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c17_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 140
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "boundMin": [
+        -12.167011604309081,
+        0.18334484100341797,
+        -7.014179573059082
+      ],
+      "boundMax": [
+        -7.583247184753418,
+        2.857670783996582,
+        -6.649409294128418
+      ],
+      "centre": [
+        -9.87512939453125,
+        1.5205078125,
+        -6.83179443359375
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c18_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 115416
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c18_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 8322
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c18_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 2298
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c18_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 536
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c18_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 191
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "boundMin": [
+        -7.645481303930283,
+        1.3844405710697174,
+        -7.882922710180282
+      ],
+      "boundMax": [
+        1.165744975805282,
+        2.8821609914302826,
+        -6.622965961694717
+      ],
+      "centre": [
+        -3.2398681640625004,
+        2.13330078125,
+        -7.252944335937499
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c19_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 108844
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c19_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 10545
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c19_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 3229
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c19_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 926
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c19_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 305
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "boundMin": [
+        -14.804355055093765,
+        2.7618070542812347,
+        -5.423495680093765
+      ],
+      "boundMax": [
+        -7.867764085531235,
+        5.322177320718765,
+        0.8058198988437653
+      ],
+      "centre": [
+        -11.3360595703125,
+        4.0419921875,
+        -2.308837890625
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c20_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 101637
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c20_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 16629
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c20_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 4812
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c20_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1068
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c20_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 317
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "boundMin": [
+        12.035435631871223,
+        2.8906602412462234,
+        -7.1654921025037766
+      ],
+      "boundMax": [
+        15.751185461878777,
+        5.4943495243787766,
+        0.9054823368787766
+      ],
+      "centre": [
+        13.893310546875,
+        4.1925048828125,
+        -3.1300048828125
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c21_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 88576
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c21_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 20035
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c21_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 5610
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c21_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1395
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c21_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 333
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "boundMin": [
+        18.45040036737919,
+        -0.5979223865270611,
+        -6.9692773669958115
+      ],
+      "boundMax": [
+        20.42215822637081,
+        7.382315697073935,
+        0.8986731189489348
+      ],
+      "centre": [
+        19.436279296875,
+        3.3921966552734366,
+        -3.0353021240234384
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c22_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 105104
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c22_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 22676
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c22_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 7218
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c22_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2076
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c22_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 555
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "boundMin": [
+        1.1769626438617706,
+        6.025595456361771,
+        -7.218056887388229
+      ],
+      "boundMax": [
+        12.19022485613823,
+        6.931435793638229,
+        0.9045803248882294
+      ],
+      "centre": [
+        6.68359375,
+        6.478515625,
+        -3.15673828125
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c23_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 98604
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c23_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 28985
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c23_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 8624
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c23_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2380
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c23_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 656
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "boundMin": [
+        -9.49197368323803,
+        2.8063661605119705,
+        0.6611024886369705
+      ],
+      "boundMax": [
+        -6.3744813948869705,
+        7.5493064469099025,
+        4.2822568863630295
+      ],
+      "centre": [
+        -7.9332275390625,
+        5.1778363037109365,
+        2.4716796875
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c24_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 100863
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c24_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 20099
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c24_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 5463
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c24_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1357
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c24_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 323
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "boundMin": [
+        -11.503250688314438,
+        -1.7914770066738128,
+        7.3423755323886875
+      ],
+      "boundMax": [
+        -7.948165327310562,
+        2.8753979051113134,
+        8.432938188314438
+      ],
+      "centre": [
+        -9.7257080078125,
+        0.5419604492187503,
+        7.887656860351562
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c25_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 99837
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c25_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 11689
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c25_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 3107
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c25_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 889
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c25_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 268
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "boundMin": [
+        -7.1796707436442375,
+        -2.1156936928629877,
+        7.9680343344807625
+      ],
+      "boundMax": [
+        0.3334793373942375,
+        2.9074539467692375,
+        8.518782071769238
+      ],
+      "centre": [
+        -3.423095703125,
+        0.3958801269531249,
+        8.243408203125
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c26_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 81389
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c26_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 14681
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c26_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 5243
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c26_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1601
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c26_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 455
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "boundMin": [
+        12.834925554692745,
+        3.065150164067745,
+        0.7448376640677452
+      ],
+      "boundMax": [
+        14.947789289057255,
+        5.877232648432255,
+        9.305699445307255
+      ],
+      "centre": [
+        13.891357421875,
+        4.47119140625,
+        5.0252685546875
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c27_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 96670
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c27_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 20235
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c27_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 5688
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c27_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1448
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c27_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 325
+        }
+      ]
+    },
+    {
+      "id": 28,
+      "boundMin": [
+        -6.527407860159874,
+        2.790411964058876,
+        5.397345557808876
+      ],
+      "boundMax": [
+        1.313103660941124,
+        7.901482567191124,
+        7.826775535941124
+      ],
+      "centre": [
+        -2.607152099609375,
+        5.345947265625,
+        6.612060546875
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c28_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 90202
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c28_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 26126
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c28_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 8133
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c28_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2115
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c28_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 520
+        }
+      ]
+    },
+    {
+      "id": 29,
+      "boundMin": [
+        -14.470986351370811,
+        6.224882789254188,
+        -7.551972679495812
+      ],
+      "boundMax": [
+        1.2012109607458115,
+        6.9175195544958115,
+        0.8127832263708115
+      ],
+      "centre": [
+        -6.6348876953125,
+        6.571201171875,
+        -3.3695947265625
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c29_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 106142
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c29_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 31240
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c29_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 9317
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c29_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2639
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c29_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 808
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "boundMin": [
+        7.346753123402595,
+        -0.9204404801130295,
+        8.842910349965095
+      ],
+      "boundMax": [
+        19.76907329261303,
+        3.208115040659905,
+        9.21170024573803
+      ],
+      "centre": [
+        13.557913208007813,
+        1.1438372802734378,
+        9.027305297851562
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c30_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 92081
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c30_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 15320
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c30_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 5091
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c30_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1610
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c30_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 361
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "boundMin": [
+        1.1912360787391663,
+        6.553052484989166,
+        0.8512763619422913
+      ],
+      "boundMax": [
+        20.53918994665146,
+        7.190599858760834,
+        8.637090337276462
+      ],
+      "centre": [
+        10.865213012695314,
+        6.871826171875,
+        4.744183349609377
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c31_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 105126
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c31_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 34872
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c31_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 11431
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c31_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 3234
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c31_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 874
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "boundMin": [
+        -8.046711772680283,
+        1.4044601023197174,
+        0.8253585398197174
+      ],
+      "boundMax": [
+        0.3340652883052826,
+        2.8831375539302826,
+        8.117756694555283
+      ],
+      "centre": [
+        -3.8563232421875,
+        2.143798828125,
+        4.4715576171875
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c32_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 96864
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c32_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 11297
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c32_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 2859
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c32_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 659
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c32_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 167
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "boundMin": [
+        11.526567796468735,
+        -0.6259322035312653,
+        8.018642991781235
+      ],
+      "boundMax": [
+        20.478671461343765,
+        3.2123140394687653,
+        8.997470289468765
+      ],
+      "centre": [
+        16.00261962890625,
+        1.29319091796875,
+        8.508056640625
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c33_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 105127
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c33_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 16883
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c33_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 5076
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c33_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1214
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c33_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 351
+        }
+      ]
+    },
+    {
+      "id": 34,
+      "boundMin": [
+        1.3513351157307625,
+        0.8511336997151375,
+        -10.120423917472362
+      ],
+      "boundMax": [
+        12.091004972159865,
+        1.7858719155192375,
+        0.8867019936442375
+      ],
+      "centre": [
+        6.721170043945314,
+        1.3185028076171874,
+        -4.616860961914062
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c34_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 95632
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c34_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 13563
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c34_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 3945
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c34_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1209
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c34_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 413
+        }
+      ]
+    },
+    {
+      "id": 35,
+      "boundMin": [
+        6.943766742944717,
+        -0.06184849143028259,
+        0.7618819773197174
+      ],
+      "boundMax": [
+        13.587483257055283,
+        3.1939285695552826,
+        8.148518413305283
+      ],
+      "centre": [
+        10.265625,
+        1.5660400390625,
+        4.4552001953125
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c35_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 97383
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c35_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 9243
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c35_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 2524
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c35_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 570
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c35_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 131
+        }
+      ]
+    },
+    {
+      "id": 36,
+      "boundMin": [
+        -7.647270988374949,
+        0.8480524979531765,
+        -7.4651799239218235
+      ],
+      "boundMax": [
+        0.9964299239218235,
+        1.5010685957968235,
+        0.9327092207968235
+      ],
+      "centre": [
+        -3.3254205322265626,
+        1.174560546875,
+        -3.2662353515625
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c36_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 108397
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c36_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 10066
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c36_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 2871
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c36_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 815
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c36_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 192
+        }
+      ]
+    },
+    {
+      "id": 37,
+      "boundMin": [
+        1.1467637568712234,
+        3.1211289912462234,
+        -6.0729628056287766
+      ],
+      "boundMax": [
+        12.055449377894405,
+        6.2275038212537766,
+        0.9115858525037766
+      ],
+      "centre": [
+        6.601106567382814,
+        4.67431640625,
+        -2.5806884765625
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c37_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 97178
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c37_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 22208
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c37_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 6131
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c37_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1422
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c37_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 374
+        }
+      ]
+    },
+    {
+      "id": 38,
+      "boundMin": [
+        -14.273288365453482,
+        -0.15801004514098166,
+        -6.887768345922232
+      ],
+      "boundMax": [
+        -12.098537806421518,
+        2.8655735217034817,
+        0.5069309435784817
+      ],
+      "centre": [
+        -13.1859130859375,
+        1.35378173828125,
+        -3.190418701171875
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c38_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 114029
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c38_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 9256
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c38_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 2689
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c38_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 874
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c38_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 283
+        }
+      ]
+    },
+    {
+      "id": 39,
+      "boundMin": [
+        -15.148720726370811,
+        -3.3659204334020614,
+        0.8820959240198135
+      ],
+      "boundMax": [
+        -11.341269508004189,
+        2.9211816638708115,
+        9.042897972464559
+      ],
+      "centre": [
+        -13.2449951171875,
+        -0.22236938476562496,
+        4.962496948242186
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c39_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 90843
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c39_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 19236
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c39_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 6684
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c39_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2304
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c39_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 798
+        }
+      ]
+    },
+    {
+      "id": 40,
+      "boundMin": [
+        -6.303013898432255,
+        5.171839617192745,
+        -7.14769285351038
+      ],
+      "boundMax": [
+        1.2930041328072548,
+        6.417515851557255,
+        0.7866564765572548
+      ],
+      "centre": [
+        -2.5050048828125,
+        5.794677734375,
+        -3.1805181884765625
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c40_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 98573
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c40_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 23684
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c40_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 6595
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c40_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1554
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c40_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 357
+        }
+      ]
+    },
+    {
+      "id": 41,
+      "boundMin": [
+        15.595288813114166,
+        2.5889411568641663,
+        -7.134935796260834
+      ],
+      "boundMax": [
+        18.660570561885834,
+        7.590990483760834,
+        0.9086174368858337
+      ],
+      "centre": [
+        17.1279296875,
+        5.0899658203125,
+        -3.1131591796875
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c41_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 102469
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c41_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 24747
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c41_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 8083
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c41_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2294
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c41_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 592
+        }
+      ]
+    },
+    {
+      "id": 42,
+      "boundMin": [
+        -14.41799907386303,
+        2.7538759261369705,
+        -6.8528135269880295
+      ],
+      "boundMax": [
+        0.9319150894880295,
+        5.3308408707380295,
+        -5.3742372542619705
+      ],
+      "centre": [
+        -6.7430419921875,
+        4.0423583984375,
+        -6.113525390625
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c42_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 97294
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c42_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 19207
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c42_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 4923
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c42_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1203
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c42_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 322
+        }
+      ]
+    },
+    {
+      "id": 43,
+      "boundMin": [
+        13.161057274788618,
+        -0.04449204161763193,
+        -6.044753272086382
+      ],
+      "boundMax": [
+        14.393621680289506,
+        3.004225928336382,
+        0.8706810064613819
+      ],
+      "centre": [
+        13.777339477539062,
+        1.479866943359375,
+        -2.5870361328125
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c43_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 103306
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c43_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 8073
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c43_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 1914
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c43_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 444
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c43_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 120
+        }
+      ]
+    },
+    {
+      "id": 44,
+      "boundMin": [
+        -13.286969363689423,
+        2.6966732144355774,
+        0.6180599331855774
+      ],
+      "boundMax": [
+        -9.315813839435577,
+        8.0188675570488,
+        8.645297000408178
+      ],
+      "centre": [
+        -11.3013916015625,
+        5.357770385742189,
+        4.631678466796878
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c44_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 96896
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c44_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 32095
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c44_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 11635
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c44_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 3127
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c44_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 780
+        }
+      ]
+    },
+    {
+      "id": 45,
+      "boundMin": [
+        -12.143391460180283,
+        -1.2088211476802826,
+        -6.754475444555283
+      ],
+      "boundMax": [
+        -7.555827289819717,
+        2.8340652883052826,
+        0.9403897511959087
+      ],
+      "centre": [
+        -9.849609375,
+        0.8126220703125,
+        -2.907042846679687
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c45_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 114002
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c45_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 9162
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c45_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 2512
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c45_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 746
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c45_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 231
+        }
+      ]
+    },
+    {
+      "id": 46,
+      "boundMin": [
+        -8.007727209925651,
+        2.7527207881212234,
+        -1.1622682255506516
+      ],
+      "boundMax": [
+        1.1173963993787766,
+        5.3507948368787766,
+        0.8268690556287766
+      ],
+      "centre": [
+        -3.4451654052734373,
+        4.0517578125,
+        -0.1676995849609375
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c46_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 93246
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c46_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 18619
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c46_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 5209
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c46_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1257
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c46_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 263
+        }
+      ]
+    },
+    {
+      "id": 47,
+      "boundMin": [
+        11.989087641239166,
+        5.284497797489166,
+        -6.722013432979583
+      ],
+      "boundMax": [
+        15.816291997432707,
+        7.699348638057707,
+        0.8717522025108337
+      ],
+      "centre": [
+        13.902689819335937,
+        6.4919232177734365,
+        -2.925130615234375
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c47_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 103459
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c47_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 27521
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c47_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 8564
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c47_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2244
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c47_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 572
+        }
+      ]
+    },
+    {
+      "id": 48,
+      "boundMin": [
+        14.41626761853695,
+        -0.7952899986505508,
+        0.7170488685369492
+      ],
+      "boundMax": [
+        21.88391304552556,
+        3.251212850213051,
+        8.17284370958805
+      ],
+      "centre": [
+        18.150090332031255,
+        1.22796142578125,
+        4.4449462890625
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c48_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 97653
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c48_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 19070
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c48_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 6586
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c48_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2109
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c48_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 600
+        }
+      ]
+    },
+    {
+      "id": 49,
+      "boundMin": [
+        20.187640011310577,
+        -1.1633414340019226,
+        -6.614315555095673
+      ],
+      "boundMax": [
+        22.295956180095672,
+        7.162457644939423,
+        0.9520084261894226
+      ],
+      "centre": [
+        21.241798095703125,
+        2.99955810546875,
+        -2.831153564453125
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c49_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 106180
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c49_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 29364
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c49_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 9637
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c49_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2775
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c49_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 791
+        }
+      ]
+    },
+    {
+      "id": 50,
+      "boundMin": [
+        -6.426653325557709,
+        6.121656000614166,
+        0.6565681099891663
+      ],
+      "boundMax": [
+        1.2589592337608337,
+        7.984545171260834,
+        5.625658452510834
+      ],
+      "centre": [
+        -2.5838470458984375,
+        7.0531005859375,
+        3.14111328125
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c50_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 101194
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c50_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 29219
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c50_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 9480
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c50_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2489
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c50_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 615
+        }
+      ]
+    },
+    {
+      "id": 51,
+      "boundMin": [
+        -7.661044508218765,
+        1.3709379136562347,
+        -6.760898023843765
+      ],
+      "boundMax": [
+        0.5389949476718883,
+        2.8922664320468883,
+        0.9579195082187653
+      ],
+      "centre": [
+        -3.5610247802734385,
+        2.1316021728515615,
+        -2.9014892578125
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c51_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 102678
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c51_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 12473
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c51_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 3527
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c51_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 852
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c51_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 226
+        }
+      ]
+    },
+    {
+      "id": 52,
+      "boundMin": [
+        1.1614894485473632,
+        3.0047121047973633,
+        7.469555854797363
+      ],
+      "boundMax": [
+        13.058764457702637,
+        5.931811332702637,
+        9.440356254577637
+      ],
+      "centre": [
+        7.110126953125,
+        4.46826171875,
+        8.4549560546875
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c52_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 77600
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c52_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 24565
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c52_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 8563
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c52_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2284
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c52_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 549
+        }
+      ]
+    },
+    {
+      "id": 53,
+      "boundMin": [
+        3.2539413169026377,
+        1.6191573813557625,
+        -7.0075516030192375
+      ],
+      "boundMax": [
+        12.158918790519238,
+        3.2739090248942375,
+        0.8906082436442375
+      ],
+      "centre": [
+        7.706430053710937,
+        2.446533203125,
+        -3.0584716796875
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c53_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 98997
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c53_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 14022
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c53_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 3766
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c53_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 812
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c53_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 193
+        }
+      ]
+    },
+    {
+      "id": 54,
+      "boundMin": [
+        -9.543251976370811,
+        2.7445898205041885,
+        4.1913671642541885
+      ],
+      "boundMax": [
+        -6.3564062267541885,
+        7.6731347888708115,
+        8.580811790823937
+      ],
+      "centre": [
+        -7.9498291015625,
+        5.2088623046875,
+        6.386089477539063
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c54_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 90746
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c54_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 22764
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c54_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 6724
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c54_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1679
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c54_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 390
+        }
+      ]
+    },
+    {
+      "id": 55,
+      "boundMin": [
+        14.760083734989166,
+        3.0298591256141663,
+        0.7151618599891663
+      ],
+      "boundMax": [
+        20.928353765010833,
+        5.919847905635834,
+        9.441820561885834
+      ],
+      "centre": [
+        17.84421875,
+        4.474853515625,
+        5.0784912109375
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c55_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 101158
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c55_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 28409
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c55_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 8903
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c55_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2433
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c55_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 597
+        }
+      ]
+    },
+    {
+      "id": 56,
+      "boundMin": [
+        1.4356835186481476,
+        6.660292893648148,
+        -7.0577161395549775
+      ],
+      "boundMax": [
+        12.188575514554977,
+        7.896103590726852,
+        0.5257337176799766
+      ],
+      "centre": [
+        6.812129516601562,
+        7.2781982421875,
+        -3.2659912109375004
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c56_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 94777
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c56_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 32741
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c56_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 11489
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c56_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 3241
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c56_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 802
+        }
+      ]
+    },
+    {
+      "id": 57,
+      "boundMin": [
+        -6.530621971487999,
+        2.700079932808876,
+        7.577521339058876
+      ],
+      "boundMax": [
+        1.279656395316124,
+        7.157819237112996,
+        8.87093203008174
+      ],
+      "centre": [
+        -2.6254827880859377,
+        4.928949584960936,
+        8.224226684570308
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c57_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 76174
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c57_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 20919
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c57_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 7253
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c57_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2028
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c57_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 505
+        }
+      ]
+    },
+    {
+      "id": 58,
+      "boundMin": [
+        -11.405757495760918,
+        -2.5062946051359174,
+        8.315165355801582
+      ],
+      "boundMax": [
+        -8.53331721127033,
+        2.8560870856046705,
+        9.000459644198429
+      ],
+      "centre": [
+        -9.969537353515623,
+        0.17489624023437655,
+        8.657812500000006
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c58_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 96950
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c58_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 6390
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c58_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 2668
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c58_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 1123
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c58_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 416
+        }
+      ]
+    },
+    {
+      "id": 59,
+      "boundMin": [
+        11.792527917027474,
+        5.7068223506212234,
+        0.7558946162462234
+      ],
+      "boundMax": [
+        20.726283118128777,
+        6.7743788212537766,
+        8.97749161422253
+      ],
+      "centre": [
+        16.259405517578124,
+        6.2406005859375,
+        4.866693115234376
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c59_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 113620
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c59_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 28628
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c59_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 8052
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c59_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2118
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c59_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 551
+        }
+      ]
+    },
+    {
+      "id": 60,
+      "boundMin": [
+        1.2326008439064027,
+        6.842744886875153,
+        1.1522968888282776
+      ],
+      "boundMax": [
+        20.410935533046725,
+        8.279325425624847,
+        8.399198472499847
+      ],
+      "centre": [
+        10.821768188476565,
+        7.56103515625,
+        4.775747680664063
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c60_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 101908
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c60_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 39703
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c60_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 16606
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c60_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 5042
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c60_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 1453
+        }
+      ]
+    },
+    {
+      "id": 61,
+      "boundMin": [
+        -14.573195546865463,
+        6.642624765634537,
+        -7.067336171865463
+      ],
+      "boundMax": [
+        1.1244650781154633,
+        8.056773427724835,
+        0.2932260644435871
+      ],
+      "centre": [
+        -6.724365234375,
+        7.349699096679686,
+        -3.387055053710938
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c61_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 101691
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c61_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 35461
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c61_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 13210
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c61_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 4083
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c61_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 1050
+        }
+      ]
+    },
+    {
+      "id": 62,
+      "boundMin": [
+        5.09612035870552,
+        -2.4820998561382295,
+        9.01753881573677
+      ],
+      "boundMax": [
+        19.70267602801323,
+        3.2414943873882294,
+        10.547418459653855
+      ],
+      "centre": [
+        12.399398193359374,
+        0.37969726562499995,
+        9.782478637695313
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c62_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 85844
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c62_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 16068
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c62_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 6190
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c62_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2616
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c62_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 986
+        }
+      ]
+    },
+    {
+      "id": 63,
+      "boundMin": [
+        -7.287282873988151,
+        -3.5953883427381514,
+        8.331578209996223
+      ],
+      "boundMax": [
+        -0.30483260452744787,
+        2.9086561650037766,
+        9.859304358363154
+      ],
+      "centre": [
+        -3.7960577392577997,
+        -0.34336608886718745,
+        9.095441284179689
+      ],
+      "lods": [
+        {
+          "level": 0,
+          "file": "Festsaal_10m_bereinigt_c63_lod0.ply",
+          "voxel": 0.0,
+          "splatCount": 88759
+        },
+        {
+          "level": 1,
+          "file": "Festsaal_10m_bereinigt_c63_lod1.ply",
+          "voxel": 0.05,
+          "splatCount": 12310
+        },
+        {
+          "level": 2,
+          "file": "Festsaal_10m_bereinigt_c63_lod2.ply",
+          "voxel": 0.1,
+          "splatCount": 4861
+        },
+        {
+          "level": 3,
+          "file": "Festsaal_10m_bereinigt_c63_lod3.ply",
+          "voxel": 0.2,
+          "splatCount": 2034
+        },
+        {
+          "level": 4,
+          "file": "Festsaal_10m_bereinigt_c63_lod4.ply",
+          "voxel": 0.4,
+          "splatCount": 730
+        }
+      ]
+    }
+  ],
+  "totalSplatsByLod": [
+    6269729,
+    1263119,
+    401347,
+    113588,
+    31953
+  ]
+}

@@ -24,7 +24,9 @@ namespace GsplatLod
     public class GaussianLodStreamAsync : MonoBehaviour
     {
         [Header("Source")]
-        public string manifestPath = "/Users/devbatuhanluleci/UnityGaussianSplatting_WebGPU_Export/tools/gsplat_lod/out/uhq/manifest.json";
+        // Relative path resolved under Application.streamingAssetsPath first; falls back to the
+        // absolute dev-machine path via LodManifestResolver when running in the editor.
+        public string manifestPath = "gsplat_lod/uhq/manifest.json";
         public Camera cam;
         public bool enableEnv = false;
 
@@ -68,6 +70,21 @@ namespace GsplatLod
         [Header("Hysteresis")]
         public int evalEveryNFrames = 10;
         public float lodUpdateDistance = 1.0f;
+
+        [Header("SuperSplat parity")]
+        [Tooltip("B1: If the optimal LOD is not yet resident, show up to this many coarser levels as fallback " +
+                 "instead of hiding the chunk. Matches SuperSplat's lodUnderfillLimit — eliminates visible holes " +
+                 "during streaming refinement. 0 = disable (old behavior: hide if optimal not resident).")]
+        [Range(0, 10)] public int lodUnderfillLimit = 3;
+        [Tooltip("B2: Staged single-step prefetch. When enabled, an Evaluate cycle only requests ONE level " +
+                 "finer than current instead of jumping directly to the optimal. Prevents flooding the loader " +
+                 "queue with LOD0 requests on scene enter; coarse always completes for every chunk before " +
+                 "finer requests contend. Disable to match old jump-to-target behavior.")]
+        public bool stagedPrefetch = true;
+        [Tooltip("B3: Refcount+cooldown eviction. When a chunk leaves the wanted set, its handle is held in " +
+                 "a cooldown for this many frames before Release. On repeated camera dither across a LOD " +
+                 "boundary, the handle is reused instead of triggering a bundle reload.")]
+        public int cooldownFrames = 100;
 
         [Header("Full-quality shortcut")]
         [Tooltip("Press this key in play mode to toggle FORCE-MAX-QUALITY: every visible chunk is pinned to " +
@@ -121,6 +138,12 @@ namespace GsplatLod
         readonly List<int>[] m_Bucket = new List<int>[kBuckets];
         readonly List<int> m_VisSorted = new List<int>();
 
+        // B3: cooldown map for delayed Addressables.Release. Keyed by address string so the same
+        // (chunk,LOD) can be reused across evict/re-request cycles without a bundle reload.
+        struct CoolEntry { public AsyncOperationHandle<GaussianSplatAsset> h; public int framesLeft; public bool valid; }
+        readonly Dictionary<string, CoolEntry> m_Cooldown = new Dictionary<string, CoolEntry>();
+        readonly List<string> m_CooldownExpired = new List<string>(16);
+
         void Start()
         {
             if (cam == null) cam = Camera.main;
@@ -143,6 +166,7 @@ namespace GsplatLod
             if (manifestPath == null) { enabled = false; return; }
             var man = JsonUtility.FromJson<LodManifest>(File.ReadAllText(manifestPath));
             if (man == null || man.chunks == null) { Debug.LogError("[StreamAsync] manifest parse failed"); enabled = false; return; }
+            Debug.Log($"[StreamAsync] manifest loaded: {man.chunks.Length} chunks from '{manifestPath}'");
             if (lodMultiplier < 1.05f) lodMultiplier = 1.05f;
 
             Vector3 mn = Vector3.one * 1e9f, mx = -mn;
@@ -220,6 +244,9 @@ namespace GsplatLod
                 }
                 m_ResidentSplats = 0; m_ResidentChunks = 0; m_LastEvalFrame = -9999;
                 m_BudgetScale = 1f;
+                // Drain cooldown handles too so the reset truly restarts from zero.
+                foreach (var kv in m_Cooldown) if (kv.Value.valid) Addressables.Release(kv.Value.h);
+                m_Cooldown.Clear();
                 Debug.Log("[StreamAsync] reset — restarting stream from coarsest LODs");
             }
 
@@ -233,6 +260,7 @@ namespace GsplatLod
             }
 
             PollLoads();     // advance in-flight loads every frame (assign when ready)
+            TickCooldown();  // B3: age out held handles
             bool camMoved = (cam.transform.position - m_LastCamPos).sqrMagnitude > lodUpdateDistance * lodUpdateDistance;
             int evalInterval = slowMotionDemo ? Mathf.Max(evalEveryNFrames, 30) : Mathf.Max(1, evalEveryNFrames);
             if ((m_Frame - m_LastEvalFrame) < evalInterval && !camMoved) return;
@@ -268,7 +296,27 @@ namespace GsplatLod
                     c.curH = c.penH; c.hasCur = true; c.curLevel = c.penLevel;
                     swapsThisFrame++;
                 }
-                else { Addressables.Release(c.penH); }   // failed, or slot lost while loading
+                else
+                {
+                    // A3: fail-LOUD so a bad Addressables bake shows up in Player.log with the
+                    // exact address that failed instead of silently blackholing the chunk.
+                    if (c.penH.Status == AsyncOperationStatus.Failed)
+                    {
+                        string addr = (c.penLevel >= 0 && c.penLevel < c.addr.Length) ? c.addr[c.penLevel] : "?";
+                        Debug.LogError($"[StreamAsync] load FAILED chunk={i} lod={c.penLevel} addr={addr} status={c.penH.Status} ex={c.penH.OperationException}");
+                    }
+                    // Strand-slot fix: release the reserved pool slot so acquire can retry on the
+                    // next Evaluate — before this, a failed load permanently pinned m_SlotChunk[slot]
+                    // and the chunk stayed invisible forever.
+                    if (c.slot >= 0)
+                    {
+                        m_SlotChunk[c.slot] = -1;
+                        m_Pool[c.slot].m_Asset = null;
+                        if (m_Pool[c.slot].gameObject.activeSelf) m_Pool[c.slot].gameObject.SetActive(false);
+                        c.slot = -1;
+                    }
+                    Addressables.Release(c.penH);
+                }
                 c.hasPen = false; c.penLevel = -1;
             }
         }
@@ -277,9 +325,78 @@ namespace GsplatLod
         {
             if (c.hasPen && c.penLevel == level) return;         // already loading this level
             if (c.hasCur && c.curLevel == level && !c.hasPen) return; // already resident
-            if (c.hasPen) { Addressables.Release(c.penH); c.hasPen = false; }
-            c.penH = Addressables.LoadAssetAsync<GaussianSplatAsset>(c.addr[level]);
+            if (c.hasPen)
+            {
+                // Cancel the currently pending load — park it in the cooldown map if it's already
+                // resolved (so a re-request can reuse the completed handle without a bundle re-read).
+                if (c.penH.IsDone && c.penH.Status == AsyncOperationStatus.Succeeded && c.penLevel >= 0)
+                    ParkInCooldown(c.addr[c.penLevel], c.penH);
+                else
+                    Addressables.Release(c.penH);
+                c.hasPen = false;
+            }
+            string wantAddr = c.addr[level];
+            // B3: cooldown-reuse. If this address is in cooldown, revive the handle instead of
+            // asking Addressables for a fresh load.
+            if (m_Cooldown.TryGetValue(wantAddr, out var ent) && ent.valid)
+            {
+                m_Cooldown.Remove(wantAddr);
+                c.penH = ent.h;
+                c.hasPen = true; c.penLevel = level;
+                return;
+            }
+            c.penH = Addressables.LoadAssetAsync<GaussianSplatAsset>(wantAddr);
             c.hasPen = true; c.penLevel = level;
+        }
+
+        void ParkInCooldown(string addr, AsyncOperationHandle<GaussianSplatAsset> h)
+        {
+            if (string.IsNullOrEmpty(addr)) { Addressables.Release(h); return; }
+            // If we already have a cooldown entry for this address, release the older one and keep
+            // the newer (they refer to the same asset — Addressables refcount treats them equivalently).
+            if (m_Cooldown.TryGetValue(addr, out var prev) && prev.valid) Addressables.Release(prev.h);
+            m_Cooldown[addr] = new CoolEntry { h = h, framesLeft = Mathf.Max(1, cooldownFrames), valid = true };
+        }
+
+        readonly List<string> m_CooldownKeys = new List<string>(32);
+        void TickCooldown()
+        {
+            if (m_Cooldown.Count == 0) return;
+            m_CooldownExpired.Clear();
+            // Snapshot keys FIRST — mutating the dictionary inside a foreach on itself throws
+            // InvalidOperationException: Collection was modified.
+            m_CooldownKeys.Clear();
+            foreach (var k in m_Cooldown.Keys) m_CooldownKeys.Add(k);
+            for (int i = 0; i < m_CooldownKeys.Count; i++)
+            {
+                var key = m_CooldownKeys[i];
+                var e = m_Cooldown[key];
+                e.framesLeft--;
+                if (e.framesLeft <= 0) m_CooldownExpired.Add(key);
+                else m_Cooldown[key] = e;
+            }
+            for (int i = 0; i < m_CooldownExpired.Count; i++)
+            {
+                if (m_Cooldown.TryGetValue(m_CooldownExpired[i], out var e) && e.valid) Addressables.Release(e.h);
+                m_Cooldown.Remove(m_CooldownExpired[i]);
+            }
+        }
+
+        // B1: pick the finest resident level within lodUnderfillLimit steps of the optimal target.
+        // Only returns curLevel if it's within tolerance; caller keeps current binding in that case.
+        // Returns -1 if no acceptable fallback is resident (caller decides whether to hide).
+        // Currently informational — the never-drop-visible logic in PollLoads already keeps a
+        // coarser resident visible while a finer level loads. This method exposes the same intent
+        // to external callers (e.g. RendererMarkerRecorder) for diagnostics.
+        public int SelectUnderfillLevel_Diag(int chunkIndex, int optimal)
+        {
+            if (chunkIndex < 0 || chunkIndex >= m_Chunks.Count) return -1;
+            var c = m_Chunks[chunkIndex];
+            if (!c.hasCur || c.curLevel < 0) return -1;
+            int diff = c.curLevel - optimal;
+            if (diff < 0) return c.curLevel;
+            if (diff <= lodUnderfillLimit) return c.curLevel;
+            return -1;
         }
 
         void Evaluate()
@@ -361,8 +478,12 @@ namespace GsplatLod
                 int free = FindFreeOrEvictableSlot(i);
                 if (free < 0) continue;
                 m_SlotChunk[free] = i; c.slot = free;
-                // Force-max skips the "instant coarse image" ramp and loads the target level (LOD0) directly.
-                StartLoad(c, forceMaxQuality ? c.desired : (coarseFirst ? c.addr.Length - 1 : c.desired)); m_InFlight++;
+                // B2: staged prefetch — request the coarsest LOD first (guaranteed instant image),
+                // then let the refine loop step one level finer per Evaluate. Force-max skips the
+                // ramp and loads the target level (LOD0) directly.
+                int initialLevel = forceMaxQuality ? c.desired
+                                 : ((coarseFirst || stagedPrefetch) ? c.addr.Length - 1 : c.desired);
+                StartLoad(c, initialLevel); m_InFlight++;
             }
             // refine resident chunks one level toward desired (nearest first, throttled)
             for (int k = 0; k < m_VisSorted.Count && m_InFlight < concurrentCap; k++)
@@ -406,8 +527,25 @@ namespace GsplatLod
             if (ci >= 0)
             {
                 var c = m_Chunks[ci];
-                if (c.hasPen) { Addressables.Release(c.penH); c.hasPen = false; c.penLevel = -1; }
-                if (c.hasCur) { Addressables.Release(c.curH); c.hasCur = false; }
+                // B3: park pending + current handles in cooldown so a rapid dither-back reuses them
+                // (matches PlayCanvas's cooldownTicks behavior). Immediate release only when the
+                // cooldown map is disabled.
+                if (c.hasPen)
+                {
+                    if (cooldownFrames > 0 && c.penH.IsDone && c.penH.Status == AsyncOperationStatus.Succeeded && c.penLevel >= 0)
+                        ParkInCooldown(c.addr[c.penLevel], c.penH);
+                    else
+                        Addressables.Release(c.penH);
+                    c.hasPen = false; c.penLevel = -1;
+                }
+                if (c.hasCur)
+                {
+                    if (cooldownFrames > 0 && c.curLevel >= 0 && c.curLevel < c.addr.Length)
+                        ParkInCooldown(c.addr[c.curLevel], c.curH);
+                    else
+                        Addressables.Release(c.curH);
+                    c.hasCur = false;
+                }
                 c.slot = -1; c.curLevel = -1;
             }
             m_SlotChunk[slot] = -1;
@@ -419,6 +557,9 @@ namespace GsplatLod
         {
             if (m_Chunks != null) foreach (var c in m_Chunks) { if (c.hasPen) Addressables.Release(c.penH); if (c.hasCur) Addressables.Release(c.curH); }
             if (m_HasEnvH) Addressables.Release(m_EnvH);
+            // B3: drain cooldown map
+            foreach (var kv in m_Cooldown) if (kv.Value.valid) Addressables.Release(kv.Value.h);
+            m_Cooldown.Clear();
         }
 
         void OnGUI()
@@ -427,11 +568,12 @@ namespace GsplatLod
             var style = new GUIStyle(GUI.skin.label) { fontSize = 17 }; style.normal.textColor = Color.white;
             var sb = new StringBuilder();
             sb.AppendLine($"GaussianLodStreamAsync (Addressables)  resident={m_ResidentSplats / 1000}K / budget={deviceBudget / 1000}K  slots={m_ResidentChunks}/{maxResidentChunks} of {m_Chunks.Count}  visible={m_VisibleChunks}");
-            int pending = 0; foreach (var c in m_Chunks) if (c.hasPen) pending++;
+            int pending = 0; int noResident = 0;
+            foreach (var c in m_Chunks) { if (c.hasPen) pending++; if (c.visible && !c.hasCur) noResident++; }
             string modeTag = forceMaxQuality ? "★ FULL QUALITY (all LOD0)"
                              : slowMotionDemo ? "SLOW-MO demo — [R] reset"
                              : "streaming — [F] toggle full quality, [R] reset";
-            sb.AppendLine($"streaming: inFlight(loading)={pending}   budgetScale={m_BudgetScale:F2}   env={(enableEnv ? m_EnvCount / 1000 + "K" : "off")}   {modeTag}");
+            sb.AppendLine($"streaming: inFlight={pending}  cooldown={m_Cooldown.Count}  noResident(visible)={noResident}  budgetScale={m_BudgetScale:F2}  env={(enableEnv ? m_EnvCount / 1000 + "K" : "off")}   {modeTag}");
 
             // Per-LOD histogram (columns: LOD0 fine .. LODn coarse) — WATCH chunks climb from coarse
             // to fine as SuperSplat's "progressive refinement" streams in.
