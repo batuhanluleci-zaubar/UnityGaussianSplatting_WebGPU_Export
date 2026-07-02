@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "count": 10,
+  "counts": [
+    10
+  ],
+  "lodLevels": 1,
+  "environment": null,
+  "filenames": [
+    "chunk_0"
+  ],
+  "tree": {
+    "bound": {
+      "min": [
+        -1.0,
+        -1.0,
+        -1.0
+      ],
+      "max": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    "lods": {
+      "0": {
+        "file": 0,
+        "offset": 0,
+        "count": 10
+      }
+    }
+  }
+}

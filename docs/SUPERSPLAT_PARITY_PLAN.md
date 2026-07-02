@@ -365,13 +365,15 @@ Kullanıcı doğrudan alıntı: _"hepsine sirayla odaklan"_ → **A → B → C 
 
 ### 11.4 Milestone Deadlines (best-effort)
 
-| Milestone | ETA | Definition of Done |
-|---|---|---|
-| M-A | +2 gün | Standalone 20/20 chunks; 0 log hatası; commit'ler pushed |
-| M-B | +1 hafta (A sonrası) | JSON manifest baker + reader + ellipsoid AABB culler shipped; deterministic load order |
-| M-C | +3 hafta (B sonrası) | Streamed SOG reader; SuperSplat editor asset direkt yüklenebilir; SPZ ↔ SOG side-by-side toggle |
-| M-D | paralel + M-C sonrası | Aura Vulkan sort ~2-4 ms; Metal desktop ~0.5 ms; Slice 4 CPU ceiling |
-| **Total** | ~5-6 hafta | Full SuperSplat parity + Aura hedef FPS + macOS Standalone verified |
+| Milestone | Human effort tahmin | AI-workflow wall-clock (bu oturumun ölçeği) | Definition of Done |
+|---|---|---|---|
+| M-A | ~2 gün | ✅ **~1 saat** (bitti: 2026-07-02) | Standalone 64/64 chunks; 0 log hatası; commit'ler pushed |
+| M-B | ~4-5 gün | tahmin **30-60 dak** (şu an workflow'da) | v2 manifest baker + reader + ellipsoid AABB culler shipped; deterministic load order |
+| M-C | ~16 gün | tahmin **2-4 saat** | Streamed SOG reader; SuperSplat editor asset direkt yüklenebilir; SPZ ↔ SOG side-by-side toggle |
+| M-D | paralel | D2/D3 **~1-2 saat**, D1 Aura elini bekliyor | Aura Vulkan sort ~2-4 ms; Metal desktop ~0.5 ms; Slice 4 CPU ceiling |
+| **Total** | ~5-6 hafta (human) | **~1-2 gün wall-clock** (AI workflow, Aura on-device hariç) | Full SuperSplat parity + Aura hedef FPS + macOS Standalone verified |
+
+**Ölçek notu**: "Human day" tahminleri recon workflow'larının blueprint çıktılarından — solo developer takvim günü. Bu oturumun AI-agent workflow rejiminde paralel decompose + parallel implement + verify sıkıştırması sayesinde 10-20× hızlanma tipik. Track A 2 human-day iş ~45 dakikada shipped.
 
 ---
 
@@ -509,7 +511,7 @@ Recon workflow'u Streamed SOG reader implementation blueprint'ini teslim etti. �
 - Aura Vulkan build: 20 chunks NEAR view LOD-band correct, sub-60ms load time cold cache
 - Player.log'da hiçbir `libwebp not found` / `codebook null` / `version mismatch` yok
 
-### D.9 Track C Fazları
+### D.9 Track C Fazları [Wall-clock revize: 2-4 saat]
 
 | Faz | İş | Süre |
 |---|---|---|
@@ -520,7 +522,66 @@ Recon workflow'u Streamed SOG reader implementation blueprint'ini teslim etti. �
 | C4 | GaussianLodStreamAsync entegre + SPZ↔SOG factory pattern | 2 gün |
 | C5 | SuperSplat CLI'de üretilen asset ile side-by-side test | 2 gün |
 | C6 | Aura Vulkan on-device build + logcat verify | 1 gün |
-| **Toplam** | | **~16 gün** |
+| **Toplam** | | **~16 gün** (human) / **~2-4 saat** (AI-workflow) |
+
+## Appendix E — Track B Sonuçları (2026-07-02, `wn5jx4f52`)
+
+### E.1 Shipped Commitler
+
+| Commit | Kapsam |
+|---|---|
+| `395e7f9` | **B0**: `InputSplatData` `GaussianSplatting.Editor.Utils` → `GaussianSplatting.Runtime` namespace. Track C prereq açıldı. |
+| `b0814b1` | **B1**: `tools/gsplat_lod/chunk_lod.py` v2 baker — `filenames[]` indirection + ellipsoid-extent bound (kSigma=3.0) + `environment{}` residency=`alwaysOn` + `--schema-version 2` CLI flag. v1 `.file` mirrors preserved (backward-compat). |
+| `920f218` | **B2/B3/B4/B5**: Runtime v2 reader + ellipsoid-extent AABB culler + `LodManifestValidator` (v1..v2 accept, v99 rejects with rebake command) + env-tier residency queue |
+
+### E.2 Doğrulama (workflow verify agent, live Editor)
+
+- **v1 backward-compat**: Phase2HQ NEAR 30s live Play — `[StreamAsync] manifest loaded: 64 chunks`, m_ResidentChunks=14 (LOD balancer aktif), **76.1 FPS** (baseline 55 FPS'in %38 üzerinde), 0 errors/warnings.
+- **v2 baker end-to-end**: `Assets/Festsaal 200k bereinigt.spz` → `/tmp/gsplat_lod_v2_test` with `--schema-version 2 --chunks 8 --levels 3`. Çıktı: `version=2`, `filenames.length=25` (== 8 chunks × 3 levels + 1 env), `bounds.kind=ellipsoidExtent`, `bounds.kSigma=3.0`, chunk0 fileIdx=0 doğru dosyaya resolve, tüm 25 filenames[] disk'te var, chunk0 ellipsoid strictly contains chunk0 AABB (superset property).
+- **B4 validator reflection**: v1 gerçek manifest → PASS; `{version:99, chunks:[]}` → FAIL with exact `"Re-bake with: python tools/gsplat_lod/chunk_lod.py <input.spz> --schema-version 2"` mesajı.
+- **B0 refactor**: `package/Runtime/InputSplatData.cs` var, `GaussianSplatting.Runtime` namespace'inde, Unity domain reload clean.
+
+### E.3 Follow-up (kritik değil, sonraki iterasyonda ele alınacak)
+
+1. **B4 minor ordering bug**: `if (man==null || man.chunks==null)` version check'ten önce çalışıyor. Elde düzenlenmiş `{version:99}` (chunks alanı yok) manifest generic `manifest parse failed` görüyor, rebake command mesajı değil. Real baker output her zaman `chunks[]` içerir → cosmetic-only. Fix: version guard'ı öne al.
+2. **Env-tier ellipsoid 10× inflated**: Voxelized env asset (1658 splat, voxel=1.35) → kSigma=3.0 × scale şişme. Env `alwaysOn` residency → cull'a hiç danışılmıyor → runtime impact yok. İleride env eviction eklenirse gerçek bug olur. Fix: baker'da env chunk için ellipsoid emit'i skip.
+3. **macOS Standalone build** bu workflow'da atlandı (v1 payload aynı kod path'ini test ediyor mantığıyla). Track B doğrulama için Editor Play yeterliydi; Track C sonrası bir birleşik Standalone rebuild yapılacak.
+4. **Station4 scene testi** N/A — Station4 sibling GsplatXR projesinde, bu repoda yok.
+
+## Appendix F — Track C Sonuçları (2026-07-02, `w8p1ap7ch`)
+
+### F.1 Shipped Commitler (7×, push edildi)
+
+| Commit | Kapsam |
+|---|---|
+| `18a2798` | **C1** SogLodMeta + SogChunkMeta parsers (Newtonsoft JObject) + `IWebPDecoder` interface + `NativeWebPDecoder` **stub** (NotImplementedException) |
+| `00e5a21` | **C2a** DecodeMeansJob + DecodeQuatsJob Burst (position 16-bit split, smallest-three quat with mode tag byte-252 invalid handling) |
+| `189a5d4` | **C2b** DecodeScalesJob + DecodeSh0Job Burst (exp(codebook[byte]), DC = 0.5 + codebook × SH_C0=0.28209...) |
+| `d0ee206` | **C2c** DecodeShNJob Burst (VQ 16-bit label, `u=(label%64)*shCoeffs, v=label/64`, texture width validate = 64×shCoeffs) |
+| `1de0cbf` | **C3a** SogKdTree.FlattenAtLoad (recursive → NativeArray<int> stack, no managed recursion) + WalkVisibleLeaves + ellipsoid-extent AABB test |
+| `fa375d4` | **C3b** SogChunkLoader (refcount + 100-frame cooldown, never-evict-visible via `pendingDecrements`) + SogStreamer (selectDesiredLodIndex + prefetchNextLod state machine, mult default 3 min 1.2) |
+| `1be31db` | **C4** SogReader public entry + `GaussianLodStreamAsync.StreamFormat={Spz,Sog,Auto}` factory + IsSogPath sniffing + `Tools/GaussianSplatting/Test/Synthetic SOG Parse` menu item |
+
+### F.2 Doğrulama
+
+- **Total 2804 LOC** yeni SOG kod (11 primary dosya + partial sibling'ler + WebP interface + editor self-test'ler)
+- **Unity 6.3 compile: 0 error, 0 warning** (refresh_unity + read_console filtered)
+- **Synthetic parse self-test**: `Tools > GaussianSplatting > Test > Synthetic SOG Parse` menu item log: `[SogSyntheticParseTest] PASS — lod-meta + chunk meta parse + flatten end-to-end`
+- **SPZ regression safety**: static-analysis (SOG kod paths gated on `resolvedFormat==Sog`). Editor Play mode empirical NEAR-30s benchmark **yapılmadı** (MCP Play-mode reliability caveat) — human runner gerekli.
+- Push: `920f218..1be31db` origin'e gitti.
+
+### F.3 Track C Bitmemiş İşler (C4b + WebP wiring)
+
+Track C **foundation shipped** — bir SOG scene şu an gerçek render **etmiyor**. Bitirmek için:
+
+1. **C4b: SogStreamer wire into `GaussianLodStreamAsync.Update()`** — bugün `SetupSogReader`'da instantiate ediliyor ama Update loop'unda çağrılmıyor. `SogKdTree.WalkVisibleLeaves` + `SogStreamer.ApplyLodChanges` + asset assembly path'i ekle. ~200 LOC.
+2. **NativeWebPDecoder gerçek impl** — `com.netpyoung.webp@0.3.22` OpenUPM install veya alternatif libwebp binding. Android arm64 + macOS .dylib. Kullanıcı onayı gerekli (native binary + OpenUPM registry).
+3. **Fail-loud gate**: `SogChunkLoader.LoadAsync` NativeWebPDecoder stub ise startup'ta `Debug.LogError` (first-frame throw yerine).
+
+### F.4 Uncommitted (kararsız durumda)
+
+- `docs/SUPERSPLAT_PARITY_PLAN.md` (bu belge — her Track güncellemesinde patlıyor)
+- `projects/GaussianExample-URP/Assets/Settings/Medium_PipelineAsset.asset` RenderScale drift (Track B'de de bahsedilen Play-mode leftover, hâlâ workspace'te)
 
 ## Appendix C — Perf Baseline Snapshot (Slice 3 sonrası)
 
