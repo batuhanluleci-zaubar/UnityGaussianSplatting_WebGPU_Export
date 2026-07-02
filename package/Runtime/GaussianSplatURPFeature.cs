@@ -153,17 +153,13 @@ namespace GaussianSplatting.Runtime
                 renderPassEvent = RenderPassEvent.BeforeRenderingTransparents
             };
 
-            // Apply render-scale once when the feature is created. 
-            var asset = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
-            if (asset != null)
-            {
-                if (m_OverrideResolution)
-                {
-                    int maxSide = Mathf.Max(Screen.width, Screen.height);
-                    float desiredScale = Mathf.Min(2f, (float)m_MaxSize / (float)maxSide);
-                    asset.renderScale = desiredScale;
-                }
-            }
+            // Structural fix: previously mutated GraphicsSettings.currentRenderPipeline.renderScale here,
+            // which writes to the SHARED UniversalRenderPipelineAsset ScriptableObject and dirties the
+            // on-disk .asset every Play at a different Game view size. That caused Medium_PipelineAsset.asset
+            // m_RenderScale to drift (0.7365 -> 1.0711), producing 2.116x pixel work and visible overdraw
+            // streaks + FPS collapse. Rely on statically-authored pipeline asset variants instead.
+            // Note: m_OverrideResolution / m_MaxSize are retained as serialized fields for backwards
+            // compatibility with existing feature configurations but no longer apply dynamic scaling.
         }
 
         public override void OnCameraPreCull(ScriptableRenderer renderer, in CameraData cameraData)
