@@ -570,13 +570,87 @@ Recon workflow'u Streamed SOG reader implementation blueprint'ini teslim etti. �
 - **SPZ regression safety**: static-analysis (SOG kod paths gated on `resolvedFormat==Sog`). Editor Play mode empirical NEAR-30s benchmark **yapılmadı** (MCP Play-mode reliability caveat) — human runner gerekli.
 - Push: `920f218..1be31db` origin'e gitti.
 
-### F.3 Track C Bitmemiş İşler (C4b + WebP wiring)
+### F.3 Track C Completion (2026-07-02, workflow `wok74htmg`)
 
-Track C **foundation shipped** — bir SOG scene şu an gerçek render **etmiyor**. Bitirmek için:
+Track C completion workflow **4 commit shipped ve pushed**:
+- `5601d74` **WebP OpenUPM**: `com.netpyoung.webp@0.3.22` scoped registry + `NativeWebPDecoder` impl + `Probe()` gate + startup fail-loud
+- `9fbffe2` **C4b**: `SogStreamer` wire into `GaussianLodStreamAsync.Update()` + never-evict-visible refcount tracking + 1-assembly-per-frame throttle
+- `7860ed8` **Synth generator**: `tools/gsplat_lod/emit_synthetic_sog.py` (Pillow WebP encoder) — 10-splat minimal .sog asset
+- `1b1e958` **E2E verify**: `SyntheticSogScene.unity` + docs
 
-1. **C4b: SogStreamer wire into `GaussianLodStreamAsync.Update()`** — bugün `SetupSogReader`'da instantiate ediliyor ama Update loop'unda çağrılmıyor. `SogKdTree.WalkVisibleLeaves` + `SogStreamer.ApplyLodChanges` + asset assembly path'i ekle. ~200 LOC.
-2. **NativeWebPDecoder gerçek impl** — `com.netpyoung.webp@0.3.22` OpenUPM install veya alternatif libwebp binding. Android arm64 + macOS .dylib. Kullanıcı onayı gerekli (native binary + OpenUPM registry).
-3. **Fail-loud gate**: `SogChunkLoader.LoadAsync` NativeWebPDecoder stub ise startup'ta `Debug.LogError` (first-frame throw yerine).
+**Verified end-to-end signals** (SyntheticSogScene, 15s Play):
+- `resolvedFormat = Sog` ✓
+- `m_SogVisibleLeaves = 1`, `m_SogResidentLeaves = 1` ✓
+- `m_SogAssembliesTotal = 25 795` (Burst decode pipeline actively running) ✓
+- `m_SogAssembliesThisFrame = 1` (throttle live) ✓
+- `[StreamAsync] SOG reader ready (leaves=1, chunks=1, lodLevels=1)` log ✓
+- 0 `NotImplementedException` / `DllNotFoundException` / libwebp errors → WebP probe passed ✓
+
+**SPZ regression preserved**: Phase2HQ NEAR 30s Play → 64 discovered / 14 resident / 1.39M splats / **66.7 FPS** / 0 errors ✓
+
+### F.4 KRITIK GAP: C4c Materialiser Eksik
+
+**SyntheticSogScene Game View EMPTY.** Reason: `SogReader.DecodeChunkSliceForStreamer` decodes to `InputSplatData` and then `Dispose()`s the NativeArray — nothing is handed to `GaussianSplatRenderer.m_Asset`. Streaming state machine + refcount + Burst decode + WebP hepsi çalışıyor ama son adım (materialise-to-renderer-buffer) yok.
+
+**C4c iş yükü**: Runtime-safe `InputSplatData → GaussianSplatAsset` encoder — `AssetDatabase.CreateAsset` bypass'i. In-memory `GaussianSplatAsset` yaratıp `pos/other/SH/color` `GraphicsBuffer`'ları direkt populate et. Pooled `GaussianSplatRenderer` slot'una `m_Asset` set et. Non-trivial architectural surgery (~300-500 LOC).
+
+**Gerçek SuperSplat asset gelene kadar C4c ertelendi** — synthetic asset üzerinde C4c yazılabilir ama gerçek SOG WebP row-order + shN atlas dimensions + never-evict multi-LOD swap gibi edge case'ler ancak real asset ile doğrulanabilir.
+
+### F.5 Uncommitted (iki dosya, çalışmalar dışı)
+
+- `Assets/Settings/Medium_PipelineAsset.asset` — Play-mode dynamic-resolution auto-adjust RenderScale drift (0.736 → 1.071), Track B'de de bahsedilmişti
+- `ProjectSettings/ProjectSettings.asset` — Unity auto-populated iPhone/Android applicationIdentifier + iOS build format (proje açılınca gelen editor churn)
+
+İkisi de Track C material değil — ileride user gözden geçirsin.
+
+## Appendix G — Track D Sonuçları (2026-07-02, `wztuikdsi`)
+
+### G.1 D2 — aras-p PR#82 Metal Graft: **NO-OP**
+
+D2 recon buldu ki fork zaten aras-p main HEAD ile **byte-identical**:
+- `DeviceRadixSort.hlsl`: 530 satır, identical
+- `SortCommon.hlsl`: 966 vs 958 satır (Slice 2'de eklenen 8-satırlık comment banner farkı, kod identical)
+- Hedeflenmiş 3 fix (WaveActiveBallot uint4 cast + simdgroup_barrier + shift-op guards) **zaten shipped**: Slice 2 `3614bda` + P1 `6b75bc9`.
+- Sıfır edit, sıfır commit. D2 aksiyonu YOK.
+
+Ayrıca: **`GpuSorting.Dispatch` package/'da ZERO call site** — Metal duvarı geçilse ve `cs.IsSupported()` true dönse bile sort %100 CPU (`SortVisibleSplatsByDepth` `NativeSorting` or `Task.Run` `ParallelSortVisibleNodes` path). Bu Track D'nin gizli architectural finding'i.
+
+### G.2 D3 — Slice 4 CPU Micro-opts: SHIPPED
+
+| Commit | İş | Beklenen |
+|---|---|---|
+| `7e319e4` | **D3.1** pool per-frame scratch in `ParallelSortVisibleNodes` (4 heap alloc/frame eliminate) | ~-0.2 to -0.4 ms |
+| `7f07c02` | **D3.2** early-return when nothing to spawn (Task[] alloc skip) | ~-0.1 to -0.3 ms |
+
+Compile clean, pushed. **Rank 3 (macOS NativeSorting.dylib build) deferred to Slice 5** — recon buldu ki C kaynağı `package/Plugins/WebGL/NativeSorting.c`'da mevcut, macOS build script eklemek ~30 dakika. Beklenen: **-0.9 to -1.1 ms** (largest untapped lever).
+
+### G.3 Verify — Editor Session FPS-Starved
+
+Phase2HQ NEAR 30s Play sırasında editor **~4 FPS** çalıştı (baseline 70-95 FPS'e ulaşamadı). Progressive chunk streaming yeterince ilerleyemedi → sort_ms convergence olmadı → Track D delta **ölçülemedi**. Kod compile-clean + no regression, ama measurable signal yok.
+
+Sub-marker snapshot t=35.55s (NOT converged): collect=1.72, start=0.67, wait=0.0008, append_cpu=1.90, append_upload=0.066. Baseline'dan hepsi düşük ama scene-state artifact (streaming stall), attribution edilemez.
+
+**Doğru Track D empirical ölçümü için**: Standalone build + Timeline-driven camera path gerekli. Editor Play jitter tolerans dışı.
+
+### G.4 Kümülatif Kampanya Bilançosu (dürüst)
+
+| Aşama | sort_ms | Delta | Doğrulama |
+|---|---|---|---|
+| Baseline | 8.50 | — | verified |
+| Slice 1 | 8.20 | −0.30 | verified |
+| Slice 2 | 7.62 | −0.58 | verified (CSV) |
+| Slice 3 (shipped-off) | 7.62 | 0.00 | verified (dormant cache 0/0/0/0) |
+| **Track D (D2 no-op + D3 shipped)** | ~7.0 (recon projection) | −0.5 to −1.0 | **unverified** (fps starved) |
+| Slice 5 hypothetical (NativeSorting.dylib macOS) | ~6.0 | −0.9 to −1.1 | not shipped |
+| Realistic floor (append_cpu memory bandwidth) | ~5.5-5.8 | — | Slice 5 sonrası |
+
+**Aşılamayan wall**: Metal HLSLcc translation of 44 wave-intrinsic call sites blocks GPU sort. Aura Vulkan olsa (D1) subgroup ops native → GpuSorting.Dispatch dispatch call site wired olsa ~2-4 ms sort_ms Aura'da elde edilir. Bu iki koşulun kesişimi olmadan macOS Metal editor CPU-side ceiling ~5.5 ms.
+
+### G.5 Track D Follow-up (opsiyonel, isteğe bağlı)
+
+1. **Slice 5**: NativeSorting.dylib macOS build. `package/Plugins/WebGL/NativeSorting.c` mevcut → clone as `package/Plugins/x86_64/NativeSorting.c` + `#ifndef __EMSCRIPTEN__` guards + `build-macos.sh: clang -shared -fPIC -O2 -lpthread -dynamiclib -o Assets/Plugins/NativeSorting.dylib NativeSorting.c`. ~30 dakika + Standalone remeasure. **Projected: -0.9 to -1.1 ms**.
+2. **Definitive perf remeasurement**: Standalone build + camera Timeline path + 5-min CSV. Editor jitter olmadan Track D + Slice 5 real delta.
+3. **GpuSorting.Dispatch wiring**: `SortVisibleSplatsByDepth`'te CPU path'in yerine GpuSorting.Dispatch çağır. Metal'de fail-loud fallback CPU'ya. Aura Vulkan'da true win. Aura hardware olmadan ölçülemez.
 
 ### F.4 Uncommitted (kararsız durumda)
 
