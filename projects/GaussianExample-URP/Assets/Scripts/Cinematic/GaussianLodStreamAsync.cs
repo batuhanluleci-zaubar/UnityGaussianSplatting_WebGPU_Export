@@ -158,6 +158,17 @@ namespace GsplatLod
         [Tooltip("When force-max-quality is ON, the concurrency cap is raised so chunks refine to LOD0 faster.")]
         [Range(1, 32)] public int forceQualityConcurrentLoads = 16;
 
+        [Header("Chunk hierarchy")]
+        [Tooltip("Root containing Chunk_N / LOD0..LOD4 children. Auto-detected from a child named 'Chunks' when empty.")]
+        public Transform chunksRoot;
+        [Tooltip("When a pre-built chunk hierarchy exists, stream into per-chunk LOD slots instead of dynamic Slot_N pool.")]
+        public bool preferPrebuiltHierarchy = true;
+
+#if UNITY_EDITOR
+        [SerializeField, HideInInspector] int editorGlobalPreviewLod = 4;
+        public int EditorGlobalPreviewLod => editorGlobalPreviewLod;
+#endif
+
         [Header("Misc")]
         public bool autoFrameCamera = true;
         public bool showHud = true;
@@ -175,7 +186,8 @@ namespace GsplatLod
             public float dist;
             public bool visible;
             public int optimal, desired;
-            public int slot = -1;
+            public int slot = -1;            // pool mode: renderer slot index
+            public GaussianSplatChunk hierarchyChunk; // hierarchy mode: pre-built chunk node
             public int curLevel = -1;        // level currently shown
             public AsyncOperationHandle<GaussianSplatAsset> curH; public bool hasCur;
             public AsyncOperationHandle<GaussianSplatAsset> penH; public bool hasPen; public int penLevel = -1;
@@ -208,9 +220,14 @@ namespace GsplatLod
         public Vector3 SceneCentre => m_SceneCentre;
         public float SceneRadius => m_SceneRadius;
         public bool BoundsReady => m_SceneRadius > 0f && m_Chunks.Count > 0;
+        public int ResidentSplats => m_ResidentSplats;
+        public int ResidentChunks => m_ResidentChunks;
+        public int VisibleChunks => m_VisibleChunks;
+        public int TotalChunkCount => m_Chunks != null ? m_Chunks.Count : 0;
         readonly Plane[] m_Planes = new Plane[6];
         readonly List<int>[] m_Bucket = new List<int>[kBuckets];
         readonly List<int> m_VisSorted = new List<int>();
+        bool m_UseHierarchy;
 
         // B3: cooldown map for delayed Addressables.Release. Keyed by address string so the same
         // (chunk,LOD) can be reused across evict/re-request cycles without a bundle reload.
@@ -293,13 +310,25 @@ namespace GsplatLod
                 m_Chunks.Add(c);
             }
 
+            m_UseHierarchy = preferPrebuiltHierarchy && TryBindHierarchy(man);
+
             int poolN = Mathf.Clamp(maxResidentChunks, 1, m_Chunks.Count);
             maxResidentChunks = poolN;
-            m_Pool = new GaussianSplatRenderer[poolN]; m_SlotChunk = new int[poolN];
-            for (int i = 0; i < poolN; i++)
+            if (!m_UseHierarchy)
             {
-                var go = new GameObject("Slot_" + i); go.SetActive(false); go.transform.SetParent(transform, false);
-                m_Pool[i] = go.AddComponent<GaussianSplatRenderer>(); m_SlotChunk[i] = -1;
+                m_Pool = new GaussianSplatRenderer[poolN]; m_SlotChunk = new int[poolN];
+                for (int i = 0; i < poolN; i++)
+                {
+                    var go = new GameObject("Slot_" + i); go.SetActive(false); go.transform.SetParent(transform, false);
+                    m_Pool[i] = go.AddComponent<GaussianSplatRenderer>(); m_SlotChunk[i] = -1;
+                }
+            }
+            else
+            {
+                // Hierarchy mode: each chunk owns LOD slots; resident cap limits loaded chunks, not renderer pool size.
+                foreach (var hc in GetComponentsInChildren<GaussianSplatChunk>(true))
+                    hc.ClearResident();
+                Debug.Log($"[StreamAsync] hierarchy mode: {CountBoundHierarchyChunks()} chunks with LOD slots (cap={poolN} resident)");
             }
 
             // B5: env tier. Loads once at Start() from environment.files[] (v2) or envFile (v1),
@@ -325,7 +354,46 @@ namespace GsplatLod
                 cam.transform.LookAt(transform.TransformPoint(m_SceneCentre));
                 cam.nearClipPlane = 0.05f; cam.farClipPlane = Mathf.Max(cam.farClipPlane, m_SceneRadius * 12f);
             }
-            Debug.Log($"[StreamAsync] {m_Chunks.Count} chunks, pool={poolN}, budget={deviceBudget}, radius={m_SceneRadius:F1}m, lodBaseDistance={lodBaseDistance:F1}m (Addressables async)");
+            Debug.Log($"[StreamAsync] {m_Chunks.Count} chunks, pool={poolN}, budget={deviceBudget}, radius={m_SceneRadius:F1}m, lodBaseDistance={lodBaseDistance:F1}m (Addressables async{(m_UseHierarchy ? ", hierarchy" : "")})");
+        }
+
+        int CountBoundHierarchyChunks()
+        {
+            int n = 0;
+            foreach (var c in m_Chunks) if (c.hierarchyChunk != null) n++;
+            return n;
+        }
+
+        /// <summary>
+        /// Match manifest chunks to pre-built GaussianSplatChunk children. Returns true when at
+        /// least one chunk was bound (requires lodSlots on each chunk node).
+        /// </summary>
+        bool TryBindHierarchy(LodManifest man)
+        {
+            Transform root = chunksRoot;
+            if (root == null) root = transform.Find(GaussianLodHierarchyBuilder.kDefaultChunksRootName);
+            if (root == null) return false;
+
+            var byId = new Dictionary<int, GaussianSplatChunk>();
+            foreach (var hc in root.GetComponentsInChildren<GaussianSplatChunk>(true))
+            {
+                if (hc.LodCount <= 0) hc.RefreshLodSlotsFromChildren();
+                if (hc.LodCount > 0) byId[hc.chunkId] = hc;
+            }
+            if (byId.Count == 0) return false;
+
+            int bound = 0;
+            foreach (var c in m_Chunks)
+            {
+                if (!byId.TryGetValue(c.meta.id, out var hc)) continue;
+                c.hierarchyChunk = hc;
+                c.localCentre = hc.localCentre;
+                c.localSize = hc.localSize;
+                bound++;
+            }
+            if (bound == 0) return false;
+            chunksRoot = root;
+            return true;
         }
 
         /// <summary>
@@ -402,13 +470,19 @@ namespace GsplatLod
                     var c = m_Chunks[i];
                     if (c.hasPen) { Addressables.Release(c.penH); c.hasPen = false; c.penLevel = -1; }
                     if (c.hasCur) { Addressables.Release(c.curH); c.hasCur = false; }
-                    if (c.slot >= 0)
+                    if (m_UseHierarchy)
+                    {
+                        c.hierarchyChunk?.ClearResident();
+                        c.slot = -1;
+                    }
+                    else if (c.slot >= 0)
                     {
                         m_Pool[c.slot].m_Asset = null;
                         if (m_Pool[c.slot].gameObject.activeSelf) m_Pool[c.slot].gameObject.SetActive(false);
                         m_SlotChunk[c.slot] = -1;
+                        c.slot = -1;
                     }
-                    c.slot = -1; c.curLevel = -1; c.lastWantedEval = -9999;
+                    c.curLevel = -1; c.lastWantedEval = -9999;
                 }
                 m_ResidentSplats = 0; m_ResidentChunks = 0; m_LastEvalFrame = -9999;
                 m_BudgetScale = 1f;
@@ -593,11 +667,15 @@ namespace GsplatLod
                 if (swapsThisFrame >= swapCap) { m_InFlight++; continue; }   // defer this swap to next frame
                 if (c.penH.Status == AsyncOperationStatus.Succeeded && c.slot >= 0)
                 {
-                    m_Pool[c.slot].m_Asset = c.penH.Result;
-                    if (!m_Pool[c.slot].gameObject.activeSelf) m_Pool[c.slot].gameObject.SetActive(true);
+                    ApplyLoadedLod(c, c.penH.Result, c.penLevel);
                     if (c.hasCur) Addressables.Release(c.curH);
                     c.curH = c.penH; c.hasCur = true; c.curLevel = c.penLevel;
                     swapsThisFrame++;
+                }
+                else if (c.penH.Status == AsyncOperationStatus.Succeeded)
+                {
+                    // Load finished after chunk was evicted — release without binding.
+                    Addressables.Release(c.penH);
                 }
                 else
                 {
@@ -611,16 +689,31 @@ namespace GsplatLod
                     // Strand-slot fix: release the reserved pool slot so acquire can retry on the
                     // next Evaluate — before this, a failed load permanently pinned m_SlotChunk[slot]
                     // and the chunk stayed invisible forever.
-                    if (c.slot >= 0)
+                    if (!m_UseHierarchy && c.slot >= 0)
                     {
                         m_SlotChunk[c.slot] = -1;
                         m_Pool[c.slot].m_Asset = null;
                         if (m_Pool[c.slot].gameObject.activeSelf) m_Pool[c.slot].gameObject.SetActive(false);
                         c.slot = -1;
                     }
+                    else if (m_UseHierarchy)
+                    {
+                        c.hierarchyChunk?.ClearResident();
+                    }
                     Addressables.Release(c.penH);
                 }
                 c.hasPen = false; c.penLevel = -1;
+            }
+        }
+
+        void ApplyLoadedLod(Chunk c, GaussianSplatAsset asset, int level)
+        {
+            if (c.hierarchyChunk != null)
+                c.hierarchyChunk.ApplyLod(level, asset);
+            else if (c.slot >= 0 && m_Pool != null)
+            {
+                m_Pool[c.slot].m_Asset = asset;
+                if (!m_Pool[c.slot].gameObject.activeSelf) m_Pool[c.slot].gameObject.SetActive(true);
             }
         }
 
@@ -822,34 +915,35 @@ namespace GsplatLod
             var wanted = new HashSet<int>();
             for (int k = 0; k < wantCount; k++) { int i = m_VisSorted[k]; wanted.Add(i); m_Chunks[i].lastWantedEval = m_Eval; }
 
-            for (int s = 0; s < m_Pool.Length; s++)
+            if (m_UseHierarchy)
             {
-                int ci = m_SlotChunk[s];
-                if (ci >= 0 && !wanted.Contains(ci) && (m_Eval - m_Chunks[ci].lastWantedEval) > cooldownEvals) ReleaseSlot(s);
+                for (int i = 0; i < m_Chunks.Count; i++)
+                {
+                    var c = m_Chunks[i];
+                    if (c.slot >= 0 && !wanted.Contains(i) && (m_Eval - c.lastWantedEval) > cooldownEvals)
+                        ReleaseChunk(i);
+                }
+            }
+            else
+            {
+                for (int s = 0; s < m_Pool.Length; s++)
+                {
+                    int ci = m_SlotChunk[s];
+                    if (ci >= 0 && !wanted.Contains(ci) && (m_Eval - m_Chunks[ci].lastWantedEval) > cooldownEvals)
+                        ReleaseSlot(s);
+                }
             }
 
             int concurrentCap = slowMotionDemo ? 1
                                 : (forceMaxQuality ? Mathf.Max(maxConcurrentLoads, forceQualityConcurrentLoads)
                                                    : maxConcurrentLoads);
-            // acquire slots for wanted-not-resident (nearest first); coarse-first load.
-            // Gate slot assignment on the load actually starting, so a chunk never gets a slot
-            // without a pending load (that would strand it — acquire skips slot>=0, refine needs hasCur).
+            // acquire for wanted-not-resident (nearest first); coarse-first load.
             for (int k = 0; k < wantCount; k++)
             {
-                if (m_InFlight >= concurrentCap) break;   // over concurrency cap -> retry next eval
+                if (m_InFlight >= concurrentCap) break;
                 int i = m_VisSorted[k]; var c = m_Chunks[i];
                 if (c.slot >= 0) continue;
-                int free = FindFreeOrEvictableSlot(i);
-                if (free < 0) continue;
-                m_SlotChunk[free] = i; c.slot = free;
-                // B2: staged prefetch — request the coarsest LOD first (guaranteed instant image),
-                // then let the refine loop step one level finer per Evaluate. Force-max skips the
-                // ramp and loads the target level (LOD0) directly.
-                // B4: very-near bypass — chunks within (lodBaseDistance * veryNearFraction) skip the
-                // ramp too, so the finest LOD reaches near-camera chunks in a single Addressables
-                // load instead of 4 sequential Evaluate cycles (~700ms). Preserves staged-prefetch
-                // for the bulk of the scene (mid/far chunks still ramp coarse->fine to protect the
-                // loader queue on scene enter).
+                if (!TryAcquireChunk(i)) continue;
                 bool veryNear = veryNearFraction > 0f && c.dist < lodBaseDistance * veryNearFraction;
                 int initialLevel = (forceMaxQuality || veryNear) ? c.desired
                                  : ((coarseFirst || stagedPrefetch) ? c.addr.Length - 1 : c.desired);
@@ -880,6 +974,63 @@ namespace GsplatLod
                 if (ratio < 1f - kBudgetDeadZone || ratio > 1f + kBudgetDeadZone)
                 { float target = 1f / Mathf.Sqrt(Mathf.Max(ratio, 1e-3f)); m_BudgetScale = Mathf.Clamp(m_BudgetScale * (1f + (target - 1f) * kBudgetBlend), 0.05f, 1f); }
             }
+        }
+
+        int CountAcquiredChunks()
+        {
+            int n = 0;
+            foreach (var c in m_Chunks) if (c.slot >= 0) n++;
+            return n;
+        }
+
+        bool TryAcquireChunk(int chunkIndex)
+        {
+            if (m_UseHierarchy)
+            {
+                if (CountAcquiredChunks() < maxResidentChunks)
+                {
+                    m_Chunks[chunkIndex].slot = 0;
+                    return true;
+                }
+                // Evict farthest acquired chunk that is not in the wanted set this frame.
+                int worst = -1; float worstDist = m_Chunks[chunkIndex].dist;
+                for (int i = 0; i < m_Chunks.Count; i++)
+                {
+                    var c = m_Chunks[i];
+                    if (c.slot >= 0 && c.dist > worstDist) { worstDist = c.dist; worst = i; }
+                }
+                if (worst >= 0) { ReleaseChunk(worst); m_Chunks[chunkIndex].slot = 0; return true; }
+                return false;
+            }
+
+            int free = FindFreeOrEvictableSlot(chunkIndex);
+            if (free < 0) return false;
+            m_SlotChunk[free] = chunkIndex;
+            m_Chunks[chunkIndex].slot = free;
+            return true;
+        }
+
+        void ReleaseChunk(int chunkIndex)
+        {
+            var c = m_Chunks[chunkIndex];
+            if (c.hasPen)
+            {
+                if (cooldownFrames > 0 && c.penH.IsDone && c.penH.Status == AsyncOperationStatus.Succeeded && c.penLevel >= 0)
+                    ParkInCooldown(c.addr[c.penLevel], c.penH);
+                else
+                    Addressables.Release(c.penH);
+                c.hasPen = false; c.penLevel = -1;
+            }
+            if (c.hasCur)
+            {
+                if (cooldownFrames > 0 && c.curLevel >= 0 && c.curLevel < c.addr.Length)
+                    ParkInCooldown(c.addr[c.curLevel], c.curH);
+                else
+                    Addressables.Release(c.curH);
+                c.hasCur = false;
+            }
+            c.hierarchyChunk?.ClearResident();
+            c.slot = -1; c.curLevel = -1;
         }
 
         int FindFreeOrEvictableSlot(int wantChunk)
@@ -972,7 +1123,7 @@ namespace GsplatLod
                 GUI.Label(new Rect(12, 10, 1600, 60), sb.ToString(), style);
                 return;
             }
-            sb.AppendLine($"GaussianLodStreamAsync (Addressables)  resident={m_ResidentSplats / 1000}K / budget={deviceBudget / 1000}K  slots={m_ResidentChunks}/{maxResidentChunks} of {m_Chunks.Count}  visible={m_VisibleChunks}");
+            sb.AppendLine($"GaussianLodStreamAsync (Addressables{(m_UseHierarchy ? ", hierarchy" : "")})  resident={m_ResidentSplats / 1000}K / budget={deviceBudget / 1000}K  slots={m_ResidentChunks}/{maxResidentChunks} of {m_Chunks.Count}  visible={m_VisibleChunks}");
             int pending = 0; int noResident = 0;
             foreach (var c in m_Chunks) { if (c.hasPen) pending++; if (c.visible && !c.hasCur) noResident++; }
             string modeTag = forceMaxQuality ? "★ FULL QUALITY (all LOD0)"

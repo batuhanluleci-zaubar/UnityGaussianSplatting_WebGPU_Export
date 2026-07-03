@@ -37,6 +37,9 @@ namespace GsplatLod
     [Serializable] public class LodManifest {
         public int version; public string scene; public int chunkCount; public int lodLevels;
         public float lodMult; public string envFile; public int envSplatCount;
+        public int sourceSplatCount;
+        public int lod0PruneRemoved;
+        public int[] totalSplatsByLod;
         // v2 additions (nullable / defaulted on v1 payloads).
         public string generator;
         public string[] filenames;             // canonical address table (SuperSplat parity)
