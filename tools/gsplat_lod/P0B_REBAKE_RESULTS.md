@@ -6,13 +6,18 @@ coverage-union alpha + `op_boost=1.3` inflation for area-weighted moment matchin
 `alpha_m = min(1, sum(o_i * area_i) / area_merged)`.
 
 Source: `projects/GaussianExample-URP/Assets/Festsaal 10m bereinigt.spz` (9.7M splats).
-Bake CLI:
+Bake CLI (full LOD0 — no LOD0 prune; use --lod0-prune-* only if you want floater cleanup on LOD0):
 ```
 python3 chunk_lod.py "…/Festsaal 10m bereinigt.spz" -o out/uhq \
   --chunks 64 --levels 5 --voxel 0.05 --lod-mult 2.0 --op-boost 1.3 \
+  --schema-version 2 \
   --prune-opacity 0.05 --prune-max-scale 0.3 --prune-aspect-ratio 30 \
   --raw-lod0 --no-env
 ```
+Or: `./rebake_uhq_full_lod0.sh`
+
+**Previous bake** applied `--prune-*` to LOD0 as well, removing **3.43M splats** (mostly
+`--prune-aspect-ratio 30`). Chunking/KD-split does not drop splats — only optional prune does.
 Bake time: 27 s. Output: 320 .ply files (64 chunks × 5 LOD). Splat counts per LOD unchanged:
 `6.27M / 1.26M / 401K / 114K / 32K`.
 

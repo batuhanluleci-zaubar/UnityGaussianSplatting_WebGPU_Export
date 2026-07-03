@@ -26,6 +26,38 @@ from merge import voxel_merge, _quat_to_R
 from ply_writer import write_ply
 
 
+def apply_prune_mask(sub, prune_opacity=0.0, prune_min_scale=0.0,
+                     prune_max_scale=0.0, prune_aspect_ratio=0.0):
+    """Return a boolean keep-mask for splats passing all prune thresholds."""
+    keep = np.ones(sub["positions"].shape[0], bool)
+    if prune_opacity > 0:
+        keep &= sub["opacity"] >= prune_opacity
+    if prune_min_scale > 0:
+        keep &= sub["scales_lin"].max(axis=1) >= prune_min_scale
+    if prune_max_scale > 0:
+        keep &= sub["scales_lin"].max(axis=1) <= prune_max_scale
+    if prune_aspect_ratio > 0:
+        ar = sub["scales_lin"].max(axis=1) / np.maximum(sub["scales_lin"].min(axis=1), 1e-6)
+        keep &= ar <= prune_aspect_ratio
+    return keep
+
+
+def prune_subset(sub, keep):
+    """Subset splat dict by keep-mask (scalars like sh_degree pass through)."""
+    return {
+        k: (v[keep] if isinstance(v, np.ndarray) and v.ndim >= 1 and v.shape[0] == sub["positions"].shape[0] else v)
+        for k, v in sub.items()
+    }
+
+
+def prune_report(n_before, keep, label):
+    n_after = int(keep.sum())
+    removed = n_before - n_after
+    pct = (100.0 * removed / n_before) if n_before else 0.0
+    print(f"  {label}: {n_before:,} -> {n_after:,}  (removed {removed:,}, {pct:.1f}%)")
+    return n_after
+
+
 def kd_split(pos, target_chunks):
     """Median-split KD-tree over centroids -> list of index arrays (~target_chunks leaves).
     Splits the largest-count leaf on its longest axis at the median until we have enough."""
@@ -101,7 +133,17 @@ def main():
                     help="prune GIANT-scale floater ellipsoids before merging (e.g. --prune-max-scale 0.3 kills anything > 30cm)")
     ap.add_argument("--prune-aspect-ratio", type=float, default=0.0,
                     help="prune NEEDLE-shaped anisotropic floaters (long thin splats -> visible streaks). "
-                         "Try 30 for noisy captures. In Festsaal: median ratio 8.9, 99%%-ile 2180 -> pass 30 kills top few %%.")
+                         "Try 30 for noisy captures. Applies to merged LODs only when --raw-lod0 is set.")
+    ap.add_argument("--lod0-prune-opacity", type=float, default=0.0,
+                    help="LOD0-only opacity prune when --raw-lod0 (default 0 = keep all). "
+                         "Use --prune-opacity for merged LOD1+ instead.")
+    ap.add_argument("--lod0-prune-min-scale", type=float, default=0.0,
+                    help="LOD0-only min-scale prune when --raw-lod0 (default 0 = keep all).")
+    ap.add_argument("--lod0-prune-max-scale", type=float, default=0.0,
+                    help="LOD0-only max-scale prune when --raw-lod0 (default 0 = keep all).")
+    ap.add_argument("--lod0-prune-aspect-ratio", type=float, default=0.0,
+                    help="LOD0-only aspect-ratio prune when --raw-lod0 (default 0 = keep all). "
+                         "The old UHQ bake used --prune-aspect-ratio 30 on LOD0 and removed ~2.6M splats.")
     ap.add_argument("--no-env", dest="env", action="store_false", help="skip the always-resident coarse whole-scene env asset")
     ap.add_argument("--raw-lod0", action="store_true",
                     help="LOD0 = RAW splats of the chunk (no merge). Max fidelity when close, matches SuperSplat's "
@@ -132,6 +174,7 @@ def main():
     is_v2 = (args.schema_version >= 2)
     manifest = {"version": args.schema_version, "scene": scene, "chunkCount": len(leaves),
                 "lodLevels": args.levels, "voxel0": args.voxel, "lodMult": args.lod_mult,
+                "sourceSplatCount": int(n0),
                 "chunks": []}
     if is_v2:
         manifest["generator"] = "chunk_lod.py v2"
@@ -139,9 +182,12 @@ def main():
         manifest["bounds"] = {"kind": "ellipsoidExtent", "kSigma": float(args.k_sigma)}
     filenames = manifest["filenames"] if is_v2 else None
     total_by_lod = [0] * args.levels
+    lod0_input_total = 0
+    lod0_output_total = 0
 
     for cid, idx in enumerate(leaves):
         sub = subset(d, idx)
+        lod0_input_total += sub["positions"].shape[0]
         bmin, bmax, bminE, bmaxE = chunk_aabb(sub, k_sigma=args.k_sigma)
         centre = [(a + b) * 0.5 for a, b in zip(bmin, bmax)]
         entry = {"id": cid, "boundMin": bmin, "boundMax": bmax, "centre": centre, "lods": []}
@@ -151,15 +197,17 @@ def main():
         for lvl in range(args.levels):
             fname = f"{scene}_c{cid}_lod{lvl}.ply"
             if lvl == 0 and args.raw_lod0:
-                # LOD0 = raw chunk splats, optionally floater-pruned. No merge -> pixel-perfect near view.
-                keep = np.ones(sub["positions"].shape[0], bool)
-                if args.prune_opacity > 0: keep &= sub["opacity"] >= args.prune_opacity
-                if args.prune_min_scale > 0: keep &= sub["scales_lin"].max(axis=1) >= args.prune_min_scale
-                if args.prune_max_scale > 0: keep &= sub["scales_lin"].max(axis=1) <= args.prune_max_scale
-                if args.prune_aspect_ratio > 0:
-                    keep &= (sub["scales_lin"].max(axis=1) / np.maximum(sub["scales_lin"].min(axis=1), 1e-6)) <= args.prune_aspect_ratio
-                raw = {k: (v[keep] if isinstance(v, np.ndarray) and v.ndim >= 1 and v.shape[0] == sub["positions"].shape[0] else v) for k, v in sub.items()}
+                # LOD0 = raw chunk splats. Prune is opt-in via --lod0-prune-* (default: keep all).
+                keep = apply_prune_mask(
+                    sub,
+                    args.lod0_prune_opacity,
+                    args.lod0_prune_min_scale,
+                    args.lod0_prune_max_scale,
+                    args.lod0_prune_aspect_ratio,
+                )
+                raw = prune_subset(sub, keep)
                 n1 = raw["positions"].shape[0]
+                lod0_output_total += n1
                 write_ply(os.path.join(args.out, fname), raw["positions"], raw["scales_lin"],
                           raw["quats"], raw["opacity"], raw["dc"], raw["sh"])
                 lod_entry = {"level": 0, "file": fname, "voxel": 0.0, "splatCount": int(n1)}
@@ -167,7 +215,10 @@ def main():
                     lod_entry["fileIdx"] = len(filenames)
                     filenames.append(fname)
                 entry["lods"].append(lod_entry)
-                print(f"  c{cid} lod0 (raw):                 {idx.shape[0]:,} -> {n1:,} splats -> {fname}")
+                if keep.sum() != idx.shape[0]:
+                    print(f"  c{cid} lod0 (raw+prune):         {idx.shape[0]:,} -> {n1:,} splats -> {fname}")
+                else:
+                    print(f"  c{cid} lod0 (raw):                 {idx.shape[0]:,} -> {n1:,} splats -> {fname}")
             else:
                 vox = args.voxel * (args.lod_mult ** max(0, lvl - (1 if args.raw_lod0 else 0)))
                 m = voxel_merge(sub, vox, args.prune_opacity, args.prune_min_scale,
@@ -183,8 +234,6 @@ def main():
                 print(f"  c{cid} lod{lvl}: voxel={vox:.4f}  {idx.shape[0]:,} -> {n1:,} splats -> {fname}")
             total_by_lod[lvl] += n1
         manifest["chunks"].append(entry)
-
-    manifest["totalSplatsByLod"] = total_by_lod
 
     # Always-resident coarse env/background (splat-transform's --lod -1): the whole scene at
     # one step coarser than the coarsest chunk level, never culled/evicted so the far field is
@@ -218,9 +267,36 @@ def main():
             }
         print(f"  env: voxel={vox_env:.4f}  {n0:,} -> {ne:,} splats -> {envname}")
 
+    manifest["totalSplatsByLod"] = total_by_lod
+    manifest["lod0PruneRemoved"] = int(lod0_input_total - lod0_output_total)
+    manifest["pruneSettings"] = {
+        "rawLod0": bool(args.raw_lod0),
+        "lod0": {
+            "opacity": args.lod0_prune_opacity,
+            "minScale": args.lod0_prune_min_scale,
+            "maxScale": args.lod0_prune_max_scale,
+            "aspectRatio": args.lod0_prune_aspect_ratio,
+        },
+        "mergedLods": {
+            "opacity": args.prune_opacity,
+            "minScale": args.prune_min_scale,
+            "maxScale": args.prune_max_scale,
+            "aspectRatio": args.prune_aspect_ratio,
+        },
+    }
+
     with open(os.path.join(args.out, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
-    print(f"\nmanifest.json written. total by LOD: {total_by_lod} (full={n0:,})")
+
+    retained_pct = (100.0 * lod0_output_total / n0) if n0 else 100.0
+    print(f"\nmanifest.json written.")
+    print(f"  source splats:     {n0:,}")
+    if args.raw_lod0:
+        print(f"  LOD0 retained:     {lod0_output_total:,}  ({retained_pct:.1f}% of source, removed {lod0_input_total - lod0_output_total:,})")
+        if lod0_output_total < n0:
+            print(f"  NOTE: LOD0 lost {n0 - lod0_output_total:,} splats via --lod0-prune-* flags.")
+            print(f"        For full fidelity use all --lod0-prune-* 0 (defaults). Keep --prune-* for LOD1+ only.")
+    print(f"  total by LOD:      {total_by_lod}")
     print(f"done in {time.time()-t0:.1f}s -> {args.out}")
 
 
