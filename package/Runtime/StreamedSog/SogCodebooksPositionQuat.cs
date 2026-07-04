@@ -19,6 +19,7 @@
 using System;
 using Unity.Burst;
 using Unity.Mathematics;
+using UnityEngine;
 
 namespace GaussianSplatting.Runtime.StreamedSog
 {
@@ -97,6 +98,25 @@ namespace GaussianSplatting.Runtime.StreamedSog
         }
 
         /// <summary>
+        /// Forward log-space position compression (inverse of <see cref="InvLogTransform"/>).
+        /// splat-transform tree bounds are world-space; sog_baker emits log-space.
+        /// </summary>
+        [BurstCompile]
+        public static float LogTransform(float x)
+        {
+            return math.sign(x) * math.log(math.abs(x) + 1f);
+        }
+
+        /// <summary>
+        /// Vectorised counterpart of <see cref="LogTransform(float)"/>.
+        /// </summary>
+        [BurstCompile]
+        public static float3 LogTransform(float3 v)
+        {
+            return math.sign(v) * math.log(math.abs(v) + 1f);
+        }
+
+        /// <summary>
         /// Vectorised counterpart of <see cref="InvLogTransform(float)"/> for a
         /// full float3 sample.
         /// </summary>
@@ -104,6 +124,48 @@ namespace GaussianSplatting.Runtime.StreamedSog
         public static float3 InvLogTransform(float3 v)
         {
             return math.sign(v) * (math.exp(math.abs(v)) - 1f);
+        }
+
+        /// <summary>
+        /// splat-transform SOG uses PlayCanvas RDF; Unity SPZ import is Y-up with +Z forward.
+        /// Empirical parity: negate Y and Z (X unchanged) on positions decoded from splat-transform.
+        /// NOTE: the official SOG spec states the file is RUB (x:right,y:up,z:back) — RUB->RUF would
+        /// negate ONLY Z. This RDF (negate Y,Z) is the shipped behavior; revisit alongside the
+        /// unresolved needle-orientation bug (see gsplat-webgpu-sog-needle-bug memory).
+        /// </summary>
+        [BurstCompile]
+        public static float3 PlayCanvasToUnityPos(float3 p) => new float3(p.x, -p.y, -p.z);
+
+        /// <summary>Quaternion companion for <see cref="PlayCanvasToUnityPos"/> (flipQ = 1,-1,-1).</summary>
+        [BurstCompile]
+        public static quaternion PlayCanvasToUnityQuat(quaternion q) =>
+            new quaternion(q.value.x, -q.value.y, -q.value.z, q.value.w);
+
+        /// <summary>Flip PlayCanvas world AABB into Unity SPZ space (min/max swap on Y/Z).</summary>
+        public static void PlayCanvasToUnityBounds(ref Vector3 bMin, ref Vector3 bMax)
+        {
+            float yLo = -bMax.y;
+            float yHi = -bMin.y;
+            float zLo = -bMax.z;
+            float zHi = -bMin.z;
+            bMin.y = yLo;
+            bMax.y = yHi;
+            bMin.z = zLo;
+            bMax.z = zHi;
+        }
+
+        /// <summary>
+        /// Raises the smallest scale axes so aspect ratio stays bounded. Preserves
+        /// anisotropy up to maxAspect (needed for flat surfaces) without needle streaks.
+        /// </summary>
+        [BurstCompile]
+        public static float3 ClampScaleAnisotropy(float3 scale, float maxAspect = 8f)
+        {
+            float maxS = math.max(scale.x, math.max(scale.y, scale.z));
+            if (!(maxS > 0f) || maxAspect <= 1f)
+                return scale;
+            float floorS = maxS / maxAspect;
+            return math.max(scale, new float3(floorS, floorS, floorS));
         }
 
         /// <summary>
@@ -124,32 +186,35 @@ namespace GaussianSplatting.Runtime.StreamedSog
             int largestIdx = b3 - 252;
             const float invNorm = 1f / 1.4142135623730951f;   // 1 / sqrt(2)
 
-            // [0..255] -> [-1..+1] then scale by 1/sqrt(2).
+            // [0..255] -> [-1..+1] then scale by 1/sqrt(2)  =>  [-sqrt(2)/2, +sqrt(2)/2].
             float a = ((b0 / 255f) * 2f - 1f) * invNorm;
             float b = ((b1 / 255f) * 2f - 1f) * invNorm;
             float c = ((b2 / 255f) * 2f - 1f) * invNorm;
 
-            // Reconstruct the largest component from ||q|| == 1.
+            // Reconstruct the omitted (largest) component from ||q|| == 1 (assumed non-negative).
             float sumSq = a * a + b * b + c * c;
-            float wSq = 1f - sumSq;
-            if (wSq < 0f) wSq = 0f;
-            float w = math.sqrt(wSq);
+            float big = math.sqrt(math.max(0f, 1f - sumSq));
 
-            // Slot back into (x,y,z,w) according to the mode tag.
-            float x, y, z, ww;
+            // PlayCanvas SOG spec: components are ordered (w, x, y, z). The mode tag
+            // (A - 252) indexes the largest/omitted component as 0=w, 1=x, 2=y, 3=z, and the
+            // three kept bytes (b0,b1,b2) fill the remaining slots in that same (w,x,y,z) order.
+            // (Previous code assumed an (x,y,z,w) order + 0=x mode mapping, which mis-slotted
+            // every component and produced randomly-oriented anisotropic splats = needle streaks.)
+            float qw, qx, qy, qz;
             switch (largestIdx)
             {
-                case 0:  x = w; y = a; z = b; ww = c; break;
-                case 1:  x = a; y = w; z = b; ww = c; break;
-                case 2:  x = a; y = b; z = w; ww = c; break;
-                default: x = a; y = b; z = c; ww = w; break;   // largestIdx == 3
+                case 0:  qw = big; qx = a;   qy = b;   qz = c;   break; // w omitted
+                case 1:  qx = big; qw = a;   qy = b;   qz = c;   break; // x omitted
+                case 2:  qy = big; qw = a;   qx = b;   qz = c;   break; // y omitted
+                default: qz = big; qw = a;   qx = b;   qy = c;   break; // z omitted
             }
 
-            float lenSq = x * x + y * y + z * z + ww * ww;
+            float lenSq = qx * qx + qy * qy + qz * qz + qw * qw;
             if (!(lenSq > 1e-8f))
                 return quaternion.identity;
 
-            return new quaternion(x, y, z, ww);
+            // Unity quaternion component order is (x, y, z, w).
+            return new quaternion(qx, qy, qz, qw);
         }
     }
 }
