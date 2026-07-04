@@ -324,13 +324,29 @@ namespace GaussianSplatting.Runtime.StreamedSog
             // where Bands == 0 and Files == null. Either signals "no higher-order SH".
             if (meta.ShN.Bands > 0 && meta.ShN.Files != null && meta.ShN.Files.Length >= 2)
             {
-                DecodeWebP(dirPath, meta.ShN.Files[0], out var labels, out res.ShNLabelsWidth, out res.ShNLabelsHeight);
+                // Resolve the two shN files by NAME, not position: splat-transform emits them in
+                // [centroids, labels] order while older bakers used [labels, centroids]. Indexing
+                // positionally swapped the palette and per-splat labels (and mis-set the centroid
+                // atlas width), so ValidateCentroidWidth failed and higher-order SH was silently
+                // dropped to DC-only — flat/matte colour vs the monolithic reference.
+                string labelsFile = null, centroidsFile = null;
+                foreach (var f in meta.ShN.Files)
+                {
+                    if (string.IsNullOrEmpty(f)) continue;
+                    var lf = f.ToLowerInvariant();
+                    if (lf.Contains("label")) labelsFile = f;
+                    else if (lf.Contains("centroid")) centroidsFile = f;
+                }
+                labelsFile ??= meta.ShN.Files[1];    // spec order fallback: [centroids, labels]
+                centroidsFile ??= meta.ShN.Files[0];
+
+                DecodeWebP(dirPath, labelsFile, out var labels, out res.ShNLabelsWidth, out res.ShNLabelsHeight);
                 // Split labels RGBA (R=lo, G=hi) into two byte arrays for the Burst job.
                 SplitLabelsChannels(labels, res.ShNLabelsWidth * res.ShNLabelsHeight,
                     out res.ShNLabelsLo, out res.ShNLabelsHi);
                 labels.Dispose();
 
-                DecodeWebP(dirPath, meta.ShN.Files[1], out var centroidsRgba, out res.ShNCentroidsWidth, out res.ShNCentroidsHeight);
+                DecodeWebP(dirPath, centroidsFile, out var centroidsRgba, out res.ShNCentroidsWidth, out res.ShNCentroidsHeight);
                 // Centroid atlas: one RGB triplet per pixel (SuperSplat SOG v2).
                 ExtractRgbChannels(centroidsRgba, res.ShNCentroidsWidth * res.ShNCentroidsHeight,
                     out res.ShNCentroids);
