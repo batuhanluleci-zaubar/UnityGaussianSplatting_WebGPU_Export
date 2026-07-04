@@ -21,6 +21,7 @@ using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
 using GaussianSplatting.Runtime;
 using GaussianSplatting.Runtime.StreamedSog;
+using GaussianSplatting.Runtime.Streaming;
 
 namespace GsplatLod
 {
@@ -36,7 +37,7 @@ namespace GsplatLod
         [Header("Source")]
         // Relative path resolved under Application.streamingAssetsPath first; falls back to the
         // absolute dev-machine path via LodManifestResolver when running in the editor.
-        public string manifestPath = "gsplat_lod/uhq/manifest.json";
+        public string manifestPath = "gsplat_lod/synthetic_sog/lod-meta.json";
 
         [Tooltip("Which streaming format to load. Auto = sniff manifestPath (SOG if .sog dir / lod-meta.json, else SPZ).")]
         [SerializeField] StreamFormat format = StreamFormat.Auto;
@@ -76,15 +77,39 @@ namespace GsplatLod
 
         // Diagnostics: leaves whose desired LOD is now resident vs. total visible (for HUD).
         int m_SogVisibleLeaves;
+        int m_SogFrustumVisibleLeaves;
         int m_SogResidentLeaves;
+
+        struct SogLeafDist { public float distSq; public int idx; }
+        readonly List<SogLeafDist> m_SogLeafDistScratch = new List<SogLeafDist>(256);
+        readonly List<int> m_SogFrustumLeafScratch = new List<int>(256);
+        readonly HashSet<int> m_SogFrustumLeafSet = new HashSet<int>();
+        readonly List<int> m_SogEvictScratch = new List<int>(256);
+
+        // Nearest frustum-visible leaf LOD debug (HUD).
+        int m_SogNearLeafIdx = -1;
+        int m_SogNearStreamLod = -1;
+        int m_SogNearDesiredLod = -1;
+        int m_SogNearAsmLod = -1;
+        int m_SogNearPoolLod = -1;
         int m_SogAssembliesTotal;
         int m_SogAssembliesThisFrame;
+
+        GaussianSplatUnifiedWorld m_UnifiedWorld;
+        GsplatLodScheduler m_SogScheduler;
+        readonly List<GsplatLodScheduler.ChunkView> m_SogChunkViews = new List<GsplatLodScheduler.ChunkView>(128);
+        readonly List<int> m_SogVisibleIds = new List<int>(128);
+        int[] m_SogBudgetedOptimal;
+        bool m_SogCoarseBootstrap = true;
+        float m_SogBootstrapStartTime;
+        const float kSogBootstrapTimeoutSec = 3f;
+        const int kSogBootstrapOffFrustumCap = 32;
 
         public Camera cam;
         public bool enableEnv = false;
 
         [Header("Streaming working set")]
-        public int maxResidentChunks = 64;
+        public int maxResidentChunks = 16;
         [Tooltip("Max concurrent async loads in flight (throttles IO / upload spikes).")]
         public int maxConcurrentLoads = 4;
         [Tooltip("Max renderer.m_Asset swaps applied PER FRAME. Each swap triggers the base renderer's " +
@@ -104,9 +129,12 @@ namespace GsplatLod
         public bool resetKeyEnabled = true;
 
         [Header("Device budget (resident splats)")]
-        [Tooltip("Desktop generous 3-4M with RAW LOD0 (top LOD = original chunk splats, no merge). Adreno / Android XR " +
-                 "~1M. Drives how much detail the balancer allows resident.")]
-        public int deviceBudget = 3_500_000;
+        [Tooltip("Desktop SuperSplat profile: 250K global splat budget. Balancer degrades far-first.")]
+        public int deviceBudget = 2_000_000;
+
+        [Header("Unified renderer (PlayCanvas gsplat-world)")]
+        [Tooltip("SOG path: single merged GaussianSplatRenderer + one DrawProcedural via GpuBufferPool.")]
+        public bool useUnifiedRenderer = true;
 
         [Header("Screen-error LOD bands")]
         [Tooltip("World-distance threshold where LOD steps from 0->1. Larger = more of the scene stays LOD0 (finer). " +
@@ -121,6 +149,9 @@ namespace GsplatLod
                  "the camera (barely-visible via AABB overshoot) has its effective distance multiplied by this " +
                  "factor -> picks a coarser LOD. 5 = 5x demotion for straight-behind; 1 = disabled.")]
         [Range(1f, 20f)] public float lodBehindPenalty = 5f;
+        [Tooltip("SOG: multiplies LOD0 distance bands (1 = default, 10 = ~10x wider finest-LOD zone). " +
+                 "Runtime: [+] / [-] in play mode. Does not rebake — widens when rank-0 is selected.")]
+        [Range(1f, 10f)] public float lod0CoverageScale = 1f;
 
         [Header("Hysteresis")]
         public int evalEveryNFrames = 10;
@@ -235,37 +266,69 @@ namespace GsplatLod
         readonly Dictionary<string, CoolEntry> m_Cooldown = new Dictionary<string, CoolEntry>();
         readonly List<string> m_CooldownExpired = new List<string>(16);
 
+        static void SafeRelease(ref AsyncOperationHandle<GaussianSplatAsset> h)
+        {
+            if (h.IsValid())
+                Addressables.Release(h);
+        }
+
+        static void SafeRelease(AsyncOperationHandle<GaussianSplatAsset> h)
+        {
+            if (h.IsValid())
+                Addressables.Release(h);
+        }
+
+        void ApplyRendererPerformanceSettings()
+        {
+            var settings = GaussianSplatSettings.instance;
+            if (settings == null) return;
+
+            // SOG unified: frustum culling ON (tris follows camera). Screen-LOD stride OFF
+            // (stride causes dot-cloud within visible nodes). Pool holds frustum leaves at finest LOD.
+            if (IsSogUnifiedPath())
+            {
+                settings.m_EnableOctreeCulling = true;
+                settings.m_OctreeSkipFrustumCull = false;
+                settings.m_EnableScreenLod = false;
+                settings.m_LodMaxStride = 1;
+                settings.m_LodSplatBudget = 0;
+                settings.m_OctreeCullingUpdateInterval = 1;
+                return;
+            }
+
+            settings.m_OctreeSkipFrustumCull = false;
+
+            settings.m_EnableOctreeCulling = true;
+            settings.m_EnableScreenLod = true;
+            settings.m_LodFullDetailPixels = 200f;
+            settings.m_OctreeCullingUpdateInterval = 2;
+
+            int perRendererCap = maxResidentChunks > 0
+                ? Mathf.Max(25_000, deviceBudget / maxResidentChunks)
+                : 0;
+            settings.m_LodSplatBudget = perRendererCap;
+        }
+
+        bool IsSogUnifiedPath()
+        {
+            if (!useUnifiedRenderer) return false;
+            if (resolvedFormat == StreamFormat.Sog) return true;
+            if (resolvedFormat != StreamFormat.Auto) return false;
+            return SogReader.IsSogPath(manifestPath);
+        }
+
         void Start()
         {
             if (cam == null) cam = Camera.main;
             for (int i = 0; i < kBuckets; i++) m_Bucket[i] = new List<int>(32);
-            var settings = GaussianSplatSettings.instance;
-            if (settings != null)
-            {
-                settings.m_EnableOctreeCulling = true;
-                // GAP #2 fix: enable per-node LOD stride ON TOP of our per-chunk asset swap. Chunks with
-                // nodes projecting below m_LodFullDetailPixels px get sub-sampled inside the renderer's
-                // own octree. Composes with our screen-error LOD (which picks a whole pre-merged asset)
-                // for a two-level "chunk picks its asset, nodes within stride if far". Keep budget=0 —
-                // our 64-bucket balancer handles totals at chunk granularity.
-                settings.m_EnableScreenLod = true;
-                settings.m_LodFullDetailPixels = 250f;
-                settings.m_LodSplatBudget = 0;
-            }
 
             manifestPath = LodManifestResolver.Resolve(manifestPath, "[StreamAsync]");
             if (manifestPath == null) { enabled = false; return; }
 
-            // ------------------------------------------------------------------
-            // Track C4: factory — pick SOG vs SPZ reader based on `format` +
-            // manifestPath sniffing. SOG path is initialised here as a sibling
-            // to the existing SPZ machinery (see SetupSogReader) and does not
-            // rip out the SPZ path — an Addressables-backed SPZ scene still
-            // exercises every line below unchanged.
-            // ------------------------------------------------------------------
             resolvedFormat = format;
             if (resolvedFormat == StreamFormat.Auto)
                 resolvedFormat = SogReader.IsSogPath(manifestPath) ? StreamFormat.Sog : StreamFormat.Spz;
+            ApplyRendererPerformanceSettings();
 
             if (resolvedFormat == StreamFormat.Sog)
             {
@@ -277,6 +340,12 @@ namespace GsplatLod
                 Debug.Log($"[StreamAsync] SOG reader ready (leaves={m_SogManifest.Leaves.Length}, " +
                           $"chunks={m_SogManifest.Meta.Filenames?.Length ?? 0}, " +
                           $"lodLevels={m_SogManifest.LodLevels})");
+                ApplyDeviceBudgetPreset();
+                m_SogCoarseBootstrap = true;
+                m_SogBootstrapStartTime = Time.time;
+                if (useUnifiedRenderer)
+                    SetupUnifiedWorld();
+                FrameCameraFromSogBounds();
                 return;
             }
 
@@ -314,6 +383,7 @@ namespace GsplatLod
 
             int poolN = Mathf.Clamp(maxResidentChunks, 1, m_Chunks.Count);
             maxResidentChunks = poolN;
+            ApplyRendererPerformanceSettings();
             if (!m_UseHierarchy)
             {
                 m_Pool = new GaussianSplatRenderer[poolN]; m_SlotChunk = new int[poolN];
@@ -339,19 +409,13 @@ namespace GsplatLod
             SetupEnvTier(man);
 
             m_SceneCentre = (mn + mx) * 0.5f; m_SceneRadius = (mx - mn).magnitude * 0.5f;
-            // Auto-tune the LOD bands to the scene scale ONLY IF the user left it at the default 15
-            // (a small number that would push everything to coarsest in a large scene). If the user
-            // explicitly set anything else in the inspector, respect it — that's how you get to
-            // "10M source, near = raw, mid = LOD1, far = LOD2, ~1-1.5M rendered/frame, hits 120 FPS".
-            // Rule of thumb for 120 FPS on desktop: lodBaseDistance ~= chunk world extent * 1.5-2
-            // (so ~5-8m for 5m chunks). For quality-first: lodBaseDistance ~= sceneRadius (=~30m).
-            if (lodBaseDistance <= 15.5f) lodBaseDistance = m_SceneRadius * 1.2f;
+            // Auto-tune LOD bands only when lodBaseDistance is unset (< 1). Explicit inspector values
+            // (e.g. 15 m for ~5 m chunks) are kept so near-field picks LOD0/1 and far picks LOD3/4.
+            if (lodBaseDistance < 1f) lodBaseDistance = m_SceneRadius * 1.2f;
             if (autoFrameCamera && cam != null)
             {
-                // Pull the camera IN to a normal framing (~1.3 x radius, close enough that near chunks pick
-                // LOD0/1). Old value 2.2 x placed it far outside the natural viewing distance.
-                cam.transform.position = transform.TransformPoint(m_SceneCentre + new Vector3(0f, 0.15f * m_SceneRadius, -1.3f * m_SceneRadius));
-                cam.transform.LookAt(transform.TransformPoint(m_SceneCentre));
+                // Camera position/rotation is intentionally NOT set — the scene / user owns the
+                // camera transform. Only widen the clip planes so a large scene isn't near/far clipped.
                 cam.nearClipPlane = 0.05f; cam.farClipPlane = Mathf.Max(cam.farClipPlane, m_SceneRadius * 12f);
             }
             Debug.Log($"[StreamAsync] {m_Chunks.Count} chunks, pool={poolN}, budget={deviceBudget}, radius={m_SceneRadius:F1}m, lodBaseDistance={lodBaseDistance:F1}m (Addressables async{(m_UseHierarchy ? ", hierarchy" : "")})");
@@ -430,16 +494,98 @@ namespace GsplatLod
             {
                 LodBaseDistance = lodBaseDistance,
                 LodMultiplier   = lodMultiplier,
+                Lod0CoverageScale = lod0CoverageScale,
+                LodBehindPenalty = lodBehindPenalty,
+                VeryNearFraction = veryNearFraction,
+                ForceMaxQuality = forceMaxQuality,
+                LodUnderfillLimit = lodUnderfillLimit,
             };
 
-            m_ChunkReader = new SogChunkReader(m_SogManifest);
+            int leafCount = m_SogManifest.Leaves.IsCreated ? m_SogManifest.Leaves.Length : 0;
+            m_SogBudgetedOptimal = new int[Mathf.Max(1, leafCount)];
+            for (int i = 0; i < m_SogBudgetedOptimal.Length; i++)
+                m_SogBudgetedOptimal[i] = -1;
 
             // Track C4b: one-shot allocation of the per-frame visibility scratch buffer.
             // WalkVisibleLeaves requires outIdx.Length >= leaves.Length.
-            int leafCount = m_SogManifest.Leaves.IsCreated ? m_SogManifest.Leaves.Length : 0;
             m_SogVisibleLeafIdx = new NativeArray<int>(
                 Mathf.Max(1, leafCount), Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            m_ChunkReader = new SogChunkReader(m_SogManifest);
             return true;
+        }
+
+        void ApplyDeviceBudgetPreset()
+        {
+            if (deviceBudget > 0) return;
+#if UNITY_ANDROID
+            deviceBudget = 1_000_000;
+#else
+            deviceBudget = 2_000_000;
+#endif
+        }
+
+        void SetupUnifiedWorld()
+        {
+            m_UnifiedWorld = GetComponent<GaussianSplatUnifiedWorld>();
+            if (m_UnifiedWorld == null)
+                m_UnifiedWorld = gameObject.AddComponent<GaussianSplatUnifiedWorld>();
+            m_UnifiedWorld.Configure(deviceBudget, deviceBudget);
+            m_SogScheduler = m_UnifiedWorld.scheduler;
+            m_SogScheduler.lodBaseDistance = lodBaseDistance;
+            m_SogScheduler.lodMultiplier = lodMultiplier;
+            m_SogScheduler.lodBehindPenalty = lodBehindPenalty;
+            m_SogScheduler.deviceBudget = deviceBudget;
+            m_SogScheduler.forceMaxQuality = forceMaxQuality;
+            m_SogScheduler.budgetScale = m_BudgetScale;
+            ApplyRendererPerformanceSettings();
+            if (m_UnifiedWorld.renderer != null)
+                m_UnifiedWorld.renderer.m_SHOrder = 3;
+            Debug.Log($"[StreamAsync] Unified world ready (budget={deviceBudget / 1000}K, maxLeaves={maxResidentChunks})");
+        }
+
+        /// <summary>
+        /// SOG path parity with the SPZ Start() auto-framing block. Without this the
+        /// scene camera stays wherever the level designer left it (often far from a
+        /// freshly baked gsplat_lod asset centred near the origin).
+        /// </summary>
+        void FrameCameraFromSogBounds()
+        {
+            if (m_SogManifest?.Meta?.Tree == null) return;
+
+            float3 wMin;
+            float3 wMax;
+            bool tight;
+            if (m_SogManifest.Leaves.IsCreated
+                && m_SogManifest.Leaves.Length > 0
+                && SogLeafMath.TryComputeTightSceneBounds(m_SogManifest.Leaves, out wMin, out wMax))
+            {
+                tight = true;
+            }
+            else
+            {
+                tight = false;
+                var mn = m_SogManifest.Meta.Tree.BoundMin;
+                var mx = m_SogManifest.Meta.Tree.BoundMax;
+                wMin = SogCodebooks.InvLogTransform(new float3(mn.x, mn.y, mn.z));
+                wMax = SogCodebooks.InvLogTransform(new float3(mx.x, mx.y, mx.z));
+            }
+
+            m_SceneCentre = new Vector3((wMin + wMax).x * 0.5f, (wMin + wMax).y * 0.5f, (wMin + wMax).z * 0.5f);
+            m_SceneRadius = math.length(wMax - wMin) * 0.5f;
+            // Interior profile: wider L0 band than legacy 1.2×radius; explicit inspector value kept when >= 1.
+            if (lodBaseDistance < 1f)
+                lodBaseDistance = Mathf.Max(8f, m_SceneRadius * 0.15f);
+            if (m_SogStreamer != null)
+                m_SogStreamer.LodBaseDistance = lodBaseDistance;
+
+            if (!autoFrameCamera || cam == null) return;
+
+            // Camera position/rotation is intentionally NOT set here — the scene / user owns the
+            // camera transform. Only the clip planes are widened so a large scene isn't near/far
+            // clipped. (Auto-frame pos + LookAt removed on request.)
+            cam.nearClipPlane = 0.05f;
+            cam.farClipPlane = Mathf.Max(cam.farClipPlane, m_SceneRadius * 12f);
+            Debug.Log($"[StreamAsync/SOG] clip planes set (near=0.05, far>={m_SceneRadius * 12f:F0}); camera transform left untouched (radius={m_SceneRadius:F1}m, tightLeafBounds={tight})");
         }
 
         void Update()
@@ -468,8 +614,8 @@ namespace GsplatLod
                 for (int i = 0; i < m_Chunks.Count; i++)
                 {
                     var c = m_Chunks[i];
-                    if (c.hasPen) { Addressables.Release(c.penH); c.hasPen = false; c.penLevel = -1; }
-                    if (c.hasCur) { Addressables.Release(c.curH); c.hasCur = false; }
+                    if (c.hasPen) { SafeRelease(ref c.penH); c.hasPen = false; c.penLevel = -1; }
+                    if (c.hasCur) { SafeRelease(ref c.curH); c.hasCur = false; }
                     if (m_UseHierarchy)
                     {
                         c.hierarchyChunk?.ClearResident();
@@ -487,7 +633,7 @@ namespace GsplatLod
                 m_ResidentSplats = 0; m_ResidentChunks = 0; m_LastEvalFrame = -9999;
                 m_BudgetScale = 1f;
                 // Drain cooldown handles too so the reset truly restarts from zero.
-                foreach (var kv in m_Cooldown) if (kv.Value.valid) Addressables.Release(kv.Value.h);
+                foreach (var kv in m_Cooldown) if (kv.Value.valid) SafeRelease(kv.Value.h);
                 m_Cooldown.Clear();
                 Debug.Log("[StreamAsync] reset — restarting stream from coarsest LODs");
             }
@@ -524,6 +670,358 @@ namespace GsplatLod
         //
         // The SPZ path is untouched: the whole method is only entered when
         // resolvedFormat == StreamFormat.Sog.
+        Vector3 SogLeafWorldCentre(int leafIdx)
+        {
+            var leaf = m_SogManifest.Leaves[leafIdx];
+            float3 wMin = SogCodebooks.InvLogTransform(leaf.BoundMin);
+            float3 wMax = SogCodebooks.InvLogTransform(leaf.BoundMax);
+            float3 c = (wMin + wMax) * 0.5f;
+            return new Vector3(c.x, c.y, c.z);
+        }
+
+        /// <summary>
+        /// Finest (lowest rank) LOD whose chunk is already decoded in the loader.
+        /// Used for coarse-first assembly when the streamer has not yet swapped to desired LOD.
+        /// </summary>
+        int SogFinestResidentLod(SogLeafNode leaf)
+        {
+            unsafe
+            {
+                for (int lod = 0; lod < leaf.LodCount; lod++)
+                {
+                    int fileIdx = leaf.LodFileIdx[lod];
+                    if (fileIdx >= 0 && m_SogChunkLoader.IsResident(fileIdx))
+                        return lod;
+                }
+            }
+            return -1;
+        }
+
+        void SyncSogStreamerTuning()
+        {
+            if (m_SogStreamer == null) return;
+            m_SogStreamer.LodBaseDistance = lodBaseDistance * m_BudgetScale;
+            m_SogStreamer.LodMultiplier = lodMultiplier;
+            m_SogStreamer.Lod0CoverageScale = lod0CoverageScale;
+            m_SogStreamer.LodBehindPenalty = lodBehindPenalty;
+            m_SogStreamer.VeryNearFraction = veryNearFraction;
+            m_SogStreamer.ForceMaxQuality = forceMaxQuality;
+            m_SogStreamer.LodUnderfillLimit = lodUnderfillLimit;
+        }
+
+        static int SogLeafSplatCountAtLod(SogLeafNode leaf, int lod)
+        {
+            unsafe
+            {
+                if (lod < 0 || lod >= leaf.LodCount) return 0;
+                return leaf.LodSplatCount[lod];
+            }
+        }
+
+        void SogEvaluateAndBudget(int visibleCount, Camera activeCam)
+        {
+            if (m_SogStreamer == null || m_SogBudgetedOptimal == null || m_SogManifest == null)
+                return;
+
+            int leafN = m_SogManifest.Leaves.Length;
+            if (m_SogCoarseBootstrap)
+            {
+                for (int i = 0; i < leafN && i < m_SogBudgetedOptimal.Length; i++)
+                {
+                    var leaf = m_SogManifest.Leaves[i];
+                    m_SogBudgetedOptimal[i] = Math.Max(0, leaf.LodCount - 1);
+                }
+                return;
+            }
+
+            m_SogChunkViews.Clear();
+            for (int v = 0; v < visibleCount; v++)
+            {
+                int leafIdx = m_SogVisibleLeafIdx[v];
+                if (leafIdx < 0 || leafIdx >= leafN) continue;
+                var leaf = m_SogManifest.Leaves[leafIdx];
+                float closestDist = Mathf.Sqrt(SogLeafMath.ClosestDistSq(leaf, activeCam.transform.position));
+                int optimal = m_SogStreamer.ComputeOptimalLod(leafIdx, activeCam);
+                m_SogChunkViews.Add(new GsplatLodScheduler.ChunkView
+                {
+                    id = leafIdx,
+                    visible = true,
+                    distance = closestDist,
+                    worldCentre = SogLeafWorldCentre(leafIdx),
+                    lodCount = leaf.LodCount,
+                    optimalLod = optimal,
+                    desiredLod = optimal,
+                    splatCountAtLod = lod => SogLeafSplatCountAtLod(leaf, lod),
+                });
+            }
+
+            if (m_SogScheduler != null && !forceMaxQuality && m_SogChunkViews.Count > 0)
+                m_SogScheduler.BalanceLodBudget(m_SogChunkViews, 0);
+
+            for (int i = 0; i < m_SogChunkViews.Count; i++)
+            {
+                int leafIdx = m_SogChunkViews[i].id;
+                if (leafIdx >= 0 && leafIdx < m_SogBudgetedOptimal.Length)
+                    m_SogBudgetedOptimal[leafIdx] = m_SogChunkViews[i].desiredLod;
+            }
+        }
+
+        void SogAcquireBootstrapChunks(int visibleCount)
+        {
+            if (!m_SogCoarseBootstrap || m_SogStreamer == null || m_SogManifest == null) return;
+
+            int leafN = m_SogManifest.Leaves.Length;
+            int offFrustumQueued = 0;
+
+            for (int leafIdx = 0; leafIdx < leafN; leafIdx++)
+            {
+                bool inFrustum = m_SogFrustumLeafSet.Contains(leafIdx);
+                if (!inFrustum)
+                {
+                    if (offFrustumQueued >= kSogBootstrapOffFrustumCap) continue;
+                    offFrustumQueued++;
+                }
+
+                var leaf = m_SogManifest.Leaves[leafIdx];
+                int maxLod = Math.Max(0, leaf.LodCount - 1);
+                unsafe
+                {
+                    int fi = leaf.LodFileIdx[maxLod];
+                    if (fi >= 0) m_SogChunkLoader.AcquireAsync(fi);
+                }
+            }
+
+            for (int v = 0; v < visibleCount; v++)
+            {
+                int leafIdx = m_SogVisibleLeafIdx[v];
+                if (leafIdx < 0 || leafIdx >= leafN) continue;
+                var leaf = m_SogManifest.Leaves[leafIdx];
+                int maxLod = Math.Max(0, leaf.LodCount - 1);
+                unsafe
+                {
+                    int fi = leaf.LodFileIdx[maxLod];
+                    if (fi >= 0) m_SogChunkLoader.AcquireAsync(fi);
+                }
+            }
+        }
+
+        void TryExitSogCoarseBootstrap(int visibleCount)
+        {
+            if (!m_SogCoarseBootstrap) return;
+
+            bool timedOut = Time.time - m_SogBootstrapStartTime >= kSogBootstrapTimeoutSec;
+            bool coarseReady = visibleCount > 0;
+            for (int v = 0; v < visibleCount && coarseReady; v++)
+            {
+                int leafIdx = m_SogVisibleLeafIdx[v];
+                if (leafIdx < 0 || leafIdx >= m_SogManifest.Leaves.Length) { coarseReady = false; break; }
+                var leaf = m_SogManifest.Leaves[leafIdx];
+                int maxLod = Math.Max(0, leaf.LodCount - 1);
+                unsafe
+                {
+                    int fi = leaf.LodFileIdx[maxLod];
+                    if (fi < 0 || !m_SogChunkLoader.IsResident(fi))
+                        coarseReady = false;
+                }
+            }
+
+            if (timedOut || coarseReady)
+            {
+                m_SogCoarseBootstrap = false;
+                m_LastEvalFrame = -9999;
+                Debug.Log("[StreamAsync/SOG] coarse bootstrap complete — switching to screen-error LOD");
+            }
+        }
+
+        void UpdateSogNearLeafDebug(Camera activeCam)
+        {
+            m_SogNearLeafIdx = -1;
+            m_SogNearStreamLod = m_SogNearDesiredLod = m_SogNearAsmLod = m_SogNearPoolLod = -1;
+            if (m_SogStreamer == null || activeCam == null || m_SogManifest == null) return;
+
+            float bestEff = float.MaxValue;
+            int bestLeaf = -1;
+            for (int i = 0; i < m_SogFrustumLeafScratch.Count; i++)
+            {
+                int leafIdx = m_SogFrustumLeafScratch[i];
+                float eff = m_SogStreamer.ComputeEffectiveDistance(leafIdx, activeCam);
+                if (eff < bestEff) { bestEff = eff; bestLeaf = leafIdx; }
+            }
+            if (bestLeaf < 0) return;
+
+            m_SogNearLeafIdx = bestLeaf;
+            m_SogNearStreamLod = m_SogStreamer.GetCurrentLod(bestLeaf);
+            m_SogNearDesiredLod = m_SogStreamer.GetLastDesiredLod(bestLeaf);
+            var leaf = m_SogManifest.Leaves[bestLeaf];
+            m_SogNearAsmLod = SogAssemblyLod(bestLeaf, leaf);
+            if (useUnifiedRenderer && m_UnifiedWorld != null && m_UnifiedWorld.lodManager.IsResident(bestLeaf))
+                m_SogNearPoolLod = m_UnifiedWorld.lodManager.GetCurrentLod(bestLeaf);
+        }
+
+        bool IsSogFrustumLeaf(int leafIdx) => m_SogFrustumLeafSet.Contains(leafIdx);
+
+        /// <summary>Resolve the LOD rank to assemble for a visible leaf (streamer or coarse fallback).</summary>
+        int SogAssemblyLod(int leafIdx, SogLeafNode leaf)
+        {
+            int optimal = m_SogStreamer != null ? m_SogStreamer.GetLastOptimalLod(leafIdx) : 0;
+            if (optimal < 0) optimal = 0;
+            optimal = Mathf.Clamp(optimal, 0, Math.Max(0, leaf.LodCount - 1));
+
+            if (IsSogFrustumLeaf(leafIdx) || forceMaxQuality || m_SogCoarseBootstrap)
+            {
+                if (m_SogCoarseBootstrap)
+                {
+                    int maxLod = Math.Max(0, leaf.LodCount - 1);
+                    unsafe
+                    {
+                        int fi = leaf.LodFileIdx[maxLod];
+                        if (fi >= 0 && m_SogChunkLoader.IsResident(fi))
+                            return maxLod;
+                    }
+                    return SogFinestResidentLod(leaf);
+                }
+
+                int allowedMax = Mathf.Min(leaf.LodCount - 1, optimal + lodUnderfillLimit);
+                unsafe
+                {
+                    for (int lod = optimal; lod <= allowedMax; lod++)
+                    {
+                        int fi = leaf.LodFileIdx[lod];
+                        if (fi >= 0 && m_SogChunkLoader.IsResident(fi))
+                            return lod;
+                    }
+                    for (int lod = allowedMax; lod >= optimal; lod--)
+                    {
+                        int fi = leaf.LodFileIdx[lod];
+                        if (fi >= 0 && m_SogChunkLoader.IsResident(fi))
+                            return lod;
+                    }
+                    if (leaf.LodCount > 0)
+                    {
+                        int file0 = leaf.LodFileIdx[0];
+                        if (file0 >= 0 && m_SogChunkLoader.IsResident(file0))
+                            return 0;
+                    }
+                }
+                int finest = SogFinestResidentLod(leaf);
+                if (finest >= 0) return finest;
+            }
+
+            int streamLod = m_SogStreamer.GetCurrentLod(leafIdx);
+            int finestRes = SogFinestResidentLod(leaf);
+            if (streamLod < 0) return finestRes;
+            if (finestRes >= 0 && finestRes < streamLod) return finestRes;
+            return streamLod;
+        }
+
+        /// <summary>Drop pool slots for leaves outside the camera frustum (after bootstrap).</summary>
+        bool EvictNonFrustumPoolLeaves(bool sogStreamingFill)
+        {
+            if (sogStreamingFill || !useUnifiedRenderer || m_UnifiedWorld == null) return false;
+            bool evicted = false;
+            m_SogEvictScratch.Clear();
+            foreach (var slot in m_UnifiedWorld.pool.ActiveSlots())
+            {
+                if (!IsSogFrustumLeaf(slot.leafId))
+                    m_SogEvictScratch.Add(slot.leafId);
+            }
+            for (int i = 0; i < m_SogEvictScratch.Count; i++)
+            {
+                m_UnifiedWorld.lodManager.EvictChunk(m_SogEvictScratch[i]);
+                evicted = true;
+            }
+            return evicted;
+        }
+
+        void EnqueueSogAssemblyCandidates(int visibleCount)
+        {
+            if (m_SogCoarseBootstrap)
+            {
+                int leafN = m_SogManifest.Leaves.Length;
+                for (int leafIdx = 0; leafIdx < leafN; leafIdx++)
+                {
+                    var leaf = m_SogManifest.Leaves[leafIdx];
+                    int curLod = SogAssemblyLod(leafIdx, leaf);
+                    if (curLod < 0) continue;
+                    int fileIdx;
+                    unsafe { fileIdx = leaf.LodFileIdx[curLod]; }
+                    if (!m_SogChunkLoader.IsResident(fileIdx)) continue;
+                    if (m_SogAssemblyPending.Add(leafIdx))
+                        m_SogAssemblyQueue.Enqueue(leafIdx);
+                }
+                return;
+            }
+
+            for (int v = 0; v < visibleCount; v++)
+            {
+                int leafIdx = m_SogVisibleLeafIdx[v];
+                if (leafIdx < 0 || leafIdx >= m_SogManifest.Leaves.Length) continue;
+
+                var leaf = m_SogManifest.Leaves[leafIdx];
+                int curLod = SogAssemblyLod(leafIdx, leaf);
+                if (curLod < 0) continue;
+
+                int fileIdx;
+                unsafe { fileIdx = leaf.LodFileIdx[curLod]; }
+                if (!m_SogChunkLoader.IsResident(fileIdx)) continue;
+
+                int poolLod = -1;
+                if (useUnifiedRenderer && m_UnifiedWorld != null && m_UnifiedWorld.lodManager.IsResident(leafIdx))
+                    poolLod = m_UnifiedWorld.lodManager.GetCurrentLod(leafIdx);
+
+                if (poolLod >= 0 && curLod >= 0 && curLod < poolLod)
+                {
+                    if (m_SogAssemblyPending.Add(leafIdx))
+                        m_SogAssemblyQueue.Enqueue(leafIdx);
+                    continue;
+                }
+
+                if (poolLod >= 0 && curLod >= 0 && poolLod == curLod)
+                    continue;
+
+                if (m_SogAssemblyPending.Add(leafIdx))
+                    m_SogAssemblyQueue.Enqueue(leafIdx);
+            }
+        }
+
+        /// <summary>True while frustum-visible leaves are still loading into the pool at LOD0.</summary>
+        bool SogIsStreamingFill()
+        {
+            if (!useUnifiedRenderer || m_UnifiedWorld == null || m_SogManifest == null)
+                return false;
+            for (int i = 0; i < m_SogFrustumLeafScratch.Count; i++)
+            {
+                int leafIdx = m_SogFrustumLeafScratch[i];
+                if (!m_UnifiedWorld.lodManager.IsResident(leafIdx))
+                    return true;
+                if (m_UnifiedWorld.lodManager.GetCurrentLod(leafIdx) > 0)
+                    return true;
+            }
+            return m_SogAssemblyQueue.Count > 0;
+        }
+
+        /// <summary>
+        /// Unified SOG: only frustum-visible leaves are streamed/assembled/drawn.
+        /// SPZ bootstrap (nearest-first all leaves) is unchanged for non-unified paths.
+        /// </summary>
+        int BuildSogActiveLeafIndices(float3 camPos, Plane[] planes)
+        {
+            int leafCount = m_SogManifest.Leaves.Length;
+            int frustumCount = SogKdTree.WalkVisibleLeaves(
+                m_SogManifest.Leaves, camPos, cam.transform.forward, planes, m_SogVisibleLeafIdx);
+            m_SogFrustumVisibleLeaves = frustumCount;
+            m_SogFrustumLeafScratch.Clear();
+            m_SogFrustumLeafSet.Clear();
+            for (int i = 0; i < frustumCount; i++)
+            {
+                int idx = m_SogVisibleLeafIdx[i];
+                m_SogFrustumLeafScratch.Add(idx);
+                m_SogFrustumLeafSet.Add(idx);
+            }
+
+            return frustumCount;
+        }
+
         void UpdateSog()
         {
             if (m_SogStreamer == null || m_SogChunkLoader == null || m_SogManifest == null)
@@ -532,71 +1030,121 @@ namespace GsplatLod
                 return;
             if (cam == null) { cam = Camera.main; if (cam == null) return; }
 
-            // Reset key parity with the SPZ path — free everything and restart from scratch.
+            ApplyRendererPerformanceSettings();
+
             if (resetKeyEnabled && Input.GetKeyDown(KeyCode.R))
             {
-                // Drop the assembly backlog; SogStreamer holds no external handles beyond the
-                // loader refcounts which the loader disposes on the next Tick when refs hit zero.
                 m_SogAssemblyQueue.Clear();
                 m_SogAssemblyPending.Clear();
-                Debug.Log("[StreamAsync/SOG] reset — clearing assembly backlog");
+                m_SogCoarseBootstrap = true;
+                m_SogBootstrapStartTime = Time.time;
+                m_BudgetScale = 1f;
+                m_LastEvalFrame = -9999;
+                Debug.Log("[StreamAsync/SOG] reset — clearing assembly backlog, restarting coarse bootstrap");
             }
 
-            // Frustum planes + camera vectors mirror what Evaluate() does for SPZ. We reuse
-            // m_Planes so both code paths share the same cached buffer.
+            if (Input.GetKeyDown(fullQualityToggleKey))
+            {
+                forceMaxQuality = !forceMaxQuality;
+                m_LastEvalFrame = -9999;
+                if (m_SogScheduler != null) m_SogScheduler.forceMaxQuality = forceMaxQuality;
+                SyncSogStreamerTuning();
+            }
+
+            if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadPlus))
+            {
+                lod0CoverageScale = Mathf.Min(10f, lod0CoverageScale + 1f);
+                Debug.Log($"[StreamAsync/SOG] lod0CoverageScale={lod0CoverageScale:F0}");
+            }
+            if (Input.GetKeyDown(KeyCode.Minus) || Input.GetKeyDown(KeyCode.KeypadMinus))
+            {
+                lod0CoverageScale = Mathf.Max(1f, lod0CoverageScale - 1f);
+                Debug.Log($"[StreamAsync/SOG] lod0CoverageScale={lod0CoverageScale:F0}");
+            }
+
             GeometryUtility.CalculateFrustumPlanes(cam, m_Planes);
             float3 camPos = cam.transform.position;
-            float3 camFwd = cam.transform.forward;
 
-            // Zero-alloc visibility walk. outIdx.Length was sized to leaf count at Start().
-            int visibleCount = SogKdTree.WalkVisibleLeaves(
-                m_SogManifest.Leaves, camPos, camFwd, m_Planes, m_SogVisibleLeafIdx);
+            int visibleCount = BuildSogActiveLeafIndices(camPos, m_Planes);
             m_SogVisibleLeaves = visibleCount;
 
-            // ApplyLodChanges drives the LOD state machine (SelectDesiredLodIndex + AcquireOnce
-            // + pendingDecrements + PrefetchNextLod) and also calls Loader.Tick() internally
-            // for cooldown ageing. That means we do NOT call Loader.Tick() a second time here.
-            m_SogStreamer.ApplyLodChanges(m_SogVisibleLeafIdx, visibleCount, camPos);
+            bool camMoved = (cam.transform.position - m_LastCamPos).sqrMagnitude > lodUpdateDistance * lodUpdateDistance;
+            int evalInterval = slowMotionDemo ? Mathf.Max(evalEveryNFrames, 30) : Mathf.Max(1, evalEveryNFrames);
+            bool doSchedulerEval = (m_Frame - m_LastEvalFrame) >= evalInterval || camMoved || m_SogCoarseBootstrap;
 
-            // Enqueue any leaf whose desired-LOD chunk just became resident but has not yet
-            // been assembled into an InputSplatData buffer. Cap the walk cost at O(visible) —
-            // the streamer already made the AcquireAsync calls above, so IsResident is a cheap
-            // dict lookup on the loader.
+            if (doSchedulerEval)
+            {
+                m_LastEvalFrame = m_Frame;
+                m_LastCamPos = cam.transform.position;
+
+                if (m_SogScheduler != null)
+                {
+                    m_SogScheduler.lodBaseDistance = lodBaseDistance;
+                    m_SogScheduler.lodMultiplier = lodMultiplier;
+                    m_SogScheduler.deviceBudget = deviceBudget;
+                    m_SogScheduler.forceMaxQuality = forceMaxQuality;
+                }
+
+                SogEvaluateAndBudget(visibleCount, cam);
+
+                if (m_SogScheduler != null)
+                    m_BudgetScale = m_SogScheduler.budgetScale;
+            }
+
+            SyncSogStreamerTuning();
+
+            if (m_SogCoarseBootstrap)
+                SogAcquireBootstrapChunks(visibleCount);
+
+            m_SogStreamer.ApplyLodChanges(m_SogVisibleLeafIdx, visibleCount, cam, m_SogBudgetedOptimal);
+
+            float veryNearDist = lodBaseDistance * m_BudgetScale * lod0CoverageScale * veryNearFraction;
+            bool hasVeryNearLeaf = forceMaxQuality;
+            if (!hasVeryNearLeaf && m_SogStreamer != null && cam != null)
+            {
+                for (int i = 0; i < m_SogFrustumLeafScratch.Count; i++)
+                {
+                    if (m_SogStreamer.ComputeEffectiveDistance(m_SogFrustumLeafScratch[i], cam) < veryNearDist)
+                    { hasVeryNearLeaf = true; break; }
+                }
+            }
+
+            // Enqueue frustum-visible leaves for LOD0 assembly; evict off-screen pool slots.
+            bool sogStreamingFill = SogIsStreamingFill();
+            bool poolDirty = EvictNonFrustumPoolLeaves(sogStreamingFill);
+
             int residentThisFrame = 0;
             for (int v = 0; v < visibleCount; v++)
             {
                 int leafIdx = m_SogVisibleLeafIdx[v];
                 if (leafIdx < 0 || leafIdx >= m_SogManifest.Leaves.Length) continue;
-
                 var leaf = m_SogManifest.Leaves[leafIdx];
-                int curLod = m_SogStreamer.GetCurrentLod(leafIdx);
-                if (curLod < 0) continue;   // desired chunk still loading; will retry next frame
-
+                int curLod = SogAssemblyLod(leafIdx, leaf);
+                if (curLod < 0) continue;
                 int fileIdx;
                 unsafe { fileIdx = leaf.LodFileIdx[curLod]; }
-                if (!m_SogChunkLoader.IsResident(fileIdx)) continue;
-
-                residentThisFrame++;
-                if (m_SogAssemblyPending.Add(leafIdx))
-                    m_SogAssemblyQueue.Enqueue(leafIdx);
+                if (m_SogChunkLoader.IsResident(fileIdx)) residentThisFrame++;
             }
+            EnqueueSogAssemblyCandidates(visibleCount);
             m_SogResidentLeaves = residentThisFrame;
 
-            // FPS-throttled asset assembly. One leaf per frame keeps the frame budget bounded
-            // (WebP decode already ran off-thread inside the loader; the DecodeSlice jobs are
-            // Burst-scheduled and Complete() inside the call). Even at 1 leaf/frame that is
-            // 60 leaves/sec at 60 FPS — enough to fill a typical SuperSplat kd-tree (~1K
-            // leaves) in ~17 seconds cold, which matches SuperSplat's own progressive-refine.
+            sogStreamingFill = SogIsStreamingFill();
+            int asmCap = m_SogCoarseBootstrap
+                ? Mathf.Max(32, maxSwapsPerFrame)
+                : sogStreamingFill
+                ? Mathf.Max(maxSwapsPerFrame, 32)
+                : hasVeryNearLeaf
+                    ? Mathf.Max(maxSwapsPerFrame, 16)
+                    : Mathf.Max(1, maxSwapsPerFrame);
             m_SogAssembliesThisFrame = 0;
-            const int kMaxAssembliesPerFrame = 1;
-            while (m_SogAssembliesThisFrame < kMaxAssembliesPerFrame && m_SogAssemblyQueue.Count > 0)
+            while (m_SogAssembliesThisFrame < asmCap && m_SogAssemblyQueue.Count > 0)
             {
                 int leafIdx = m_SogAssemblyQueue.Dequeue();
                 m_SogAssemblyPending.Remove(leafIdx);
 
                 if (leafIdx < 0 || leafIdx >= m_SogManifest.Leaves.Length) continue;
                 var leaf = m_SogManifest.Leaves[leafIdx];
-                int curLod = m_SogStreamer.GetCurrentLod(leafIdx);
+                int curLod = SogAssemblyLod(leafIdx, leaf);
                 if (curLod < 0 || curLod >= leaf.LodCount) continue;
 
                 int fileIdx; int offset; int count;
@@ -614,12 +1162,7 @@ namespace GsplatLod
                     continue;
                 }
 
-                // Runtime InputSplatData -> GaussianSplatAsset materialisation is out of scope
-                // for this pass (the editor pipeline in GaussianSplatAssetCreator is heavy —
-                // Morton reorder, chunk data, format conversion, texture writes). For now we
-                // decode-then-dispose so the Burst pipeline is exercised end-to-end and the
-                // never-evict-visible refcount policy in SogStreamer sees a real consumer.
-                // The renderer-hook is the next track's deliverable (Track C4c).
+                // Track C4c: decode -> GpuBufferPool -> unified single-draw renderer.
                 try
                 {
                     var chunk = m_SogChunkLoader.GetChunkResource(fileIdx);
@@ -629,9 +1172,20 @@ namespace GsplatLod
                         count, Allocator.Persistent, NativeArrayOptions.ClearMemory);
                     try
                     {
-                        SogReader.DecodeChunkSliceForStreamer(chunk, offset, count, splats);
+                        SogReader.DecodeChunkSliceForStreamer(
+                            chunk, offset, count, splats, m_SogManifest.PlayCanvasCoords);
                         m_SogAssembliesTotal++;
                         m_SogAssembliesThisFrame++;
+
+                        if (useUnifiedRenderer && m_UnifiedWorld != null)
+                        {
+                            var camWorld = cam.transform.position;
+                            if (!m_UnifiedWorld.lodManager.RequestChunk(
+                                    leafIdx, curLod, splats, camWorld, SogLeafWorldCentre))
+                                Debug.LogWarning($"[StreamAsync/SOG] pool full — could not add leaf {leafIdx} ({count} splats)");
+                            else
+                                poolDirty = true;
+                        }
                     }
                     finally
                     {
@@ -643,6 +1197,28 @@ namespace GsplatLod
                     Debug.LogWarning($"[StreamAsync/SOG] assemble leaf {leafIdx} lod {curLod} chunk {fileIdx} failed: {ex.Message}");
                 }
             }
+
+            if (useUnifiedRenderer && m_UnifiedWorld != null)
+            {
+                m_ResidentSplats = m_UnifiedWorld.pool.residentSplats;
+                m_ResidentChunks = 0;
+                foreach (var _ in m_UnifiedWorld.pool.ActiveSlots()) m_ResidentChunks++;
+
+                if (poolDirty || m_UnifiedWorld.pool.needsRebuild)
+                    m_UnifiedWorld.SyncRendererFromPoolThrottled(SogIsStreamingFill());
+            }
+
+            TryExitSogCoarseBootstrap(visibleCount);
+
+            if (m_SogScheduler != null)
+            {
+                m_SogScheduler.lodBaseDistance = lodBaseDistance;
+                m_SogScheduler.lodMultiplier = lodMultiplier;
+                m_SogScheduler.deviceBudget = deviceBudget;
+                m_SogScheduler.forceMaxQuality = forceMaxQuality;
+            }
+            SyncSogStreamerTuning();
+            UpdateSogNearLeafDebug(cam);
         }
 
         void PollLoads()
@@ -668,14 +1244,14 @@ namespace GsplatLod
                 if (c.penH.Status == AsyncOperationStatus.Succeeded && c.slot >= 0)
                 {
                     ApplyLoadedLod(c, c.penH.Result, c.penLevel);
-                    if (c.hasCur) Addressables.Release(c.curH);
+                    if (c.hasCur) SafeRelease(ref c.curH);
                     c.curH = c.penH; c.hasCur = true; c.curLevel = c.penLevel;
                     swapsThisFrame++;
                 }
                 else if (c.penH.Status == AsyncOperationStatus.Succeeded)
                 {
                     // Load finished after chunk was evicted — release without binding.
-                    Addressables.Release(c.penH);
+                    SafeRelease(ref c.penH);
                 }
                 else
                 {
@@ -700,7 +1276,7 @@ namespace GsplatLod
                     {
                         c.hierarchyChunk?.ClearResident();
                     }
-                    Addressables.Release(c.penH);
+                    SafeRelease(ref c.penH);
                 }
                 c.hasPen = false; c.penLevel = -1;
             }
@@ -728,7 +1304,7 @@ namespace GsplatLod
                 if (c.penH.IsDone && c.penH.Status == AsyncOperationStatus.Succeeded && c.penLevel >= 0)
                     ParkInCooldown(c.addr[c.penLevel], c.penH);
                 else
-                    Addressables.Release(c.penH);
+                    SafeRelease(ref c.penH);
                 c.hasPen = false;
             }
             string wantAddr = c.addr[level];
@@ -747,10 +1323,10 @@ namespace GsplatLod
 
         void ParkInCooldown(string addr, AsyncOperationHandle<GaussianSplatAsset> h)
         {
-            if (string.IsNullOrEmpty(addr)) { Addressables.Release(h); return; }
+            if (string.IsNullOrEmpty(addr)) { SafeRelease(h); return; }
             // If we already have a cooldown entry for this address, release the older one and keep
             // the newer (they refer to the same asset — Addressables refcount treats them equivalently).
-            if (m_Cooldown.TryGetValue(addr, out var prev) && prev.valid) Addressables.Release(prev.h);
+            if (m_Cooldown.TryGetValue(addr, out var prev) && prev.valid) SafeRelease(prev.h);
             m_Cooldown[addr] = new CoolEntry { h = h, framesLeft = Mathf.Max(1, cooldownFrames), valid = true };
         }
 
@@ -773,7 +1349,7 @@ namespace GsplatLod
             }
             for (int i = 0; i < m_CooldownExpired.Count; i++)
             {
-                if (m_Cooldown.TryGetValue(m_CooldownExpired[i], out var e) && e.valid) Addressables.Release(e.h);
+                if (m_Cooldown.TryGetValue(m_CooldownExpired[i], out var e) && e.valid) SafeRelease(e.h);
                 m_Cooldown.Remove(m_CooldownExpired[i]);
             }
         }
@@ -1018,7 +1594,7 @@ namespace GsplatLod
                 if (cooldownFrames > 0 && c.penH.IsDone && c.penH.Status == AsyncOperationStatus.Succeeded && c.penLevel >= 0)
                     ParkInCooldown(c.addr[c.penLevel], c.penH);
                 else
-                    Addressables.Release(c.penH);
+                    SafeRelease(ref c.penH);
                 c.hasPen = false; c.penLevel = -1;
             }
             if (c.hasCur)
@@ -1026,7 +1602,7 @@ namespace GsplatLod
                 if (cooldownFrames > 0 && c.curLevel >= 0 && c.curLevel < c.addr.Length)
                     ParkInCooldown(c.addr[c.curLevel], c.curH);
                 else
-                    Addressables.Release(c.curH);
+                    SafeRelease(ref c.curH);
                 c.hasCur = false;
             }
             c.hierarchyChunk?.ClearResident();
@@ -1056,7 +1632,7 @@ namespace GsplatLod
                     if (cooldownFrames > 0 && c.penH.IsDone && c.penH.Status == AsyncOperationStatus.Succeeded && c.penLevel >= 0)
                         ParkInCooldown(c.addr[c.penLevel], c.penH);
                     else
-                        Addressables.Release(c.penH);
+                        SafeRelease(ref c.penH);
                     c.hasPen = false; c.penLevel = -1;
                 }
                 if (c.hasCur)
@@ -1064,7 +1640,7 @@ namespace GsplatLod
                     if (cooldownFrames > 0 && c.curLevel >= 0 && c.curLevel < c.addr.Length)
                         ParkInCooldown(c.addr[c.curLevel], c.curH);
                     else
-                        Addressables.Release(c.curH);
+                        SafeRelease(ref c.curH);
                     c.hasCur = false;
                 }
                 c.slot = -1; c.curLevel = -1;
@@ -1090,16 +1666,27 @@ namespace GsplatLod
             m_SogManifest = null;
             m_ChunkReader = null;
 
-            if (m_Chunks != null) foreach (var c in m_Chunks) { if (c.hasPen) Addressables.Release(c.penH); if (c.hasCur) Addressables.Release(c.curH); }
-            if (m_HasEnvH) Addressables.Release(m_EnvH);
+            if (m_Chunks != null)
+                foreach (var c in m_Chunks)
+                {
+                    if (c.hasPen) SafeRelease(ref c.penH);
+                    if (c.hasCur) SafeRelease(ref c.curH);
+                }
+            if (m_HasEnvH) SafeRelease(ref m_EnvH);
             // B5: release env-tier handles (never released at runtime — cleaned only on teardown).
             if (m_EnvH2 != null)
             {
                 for (int i = 0; i < m_EnvH2.Length; i++)
-                    if (m_EnvH2Valid != null && m_EnvH2Valid[i]) { Addressables.Release(m_EnvH2[i]); m_EnvH2Valid[i] = false; }
+                {
+                    if (m_EnvH2Valid != null && m_EnvH2Valid[i])
+                    {
+                        SafeRelease(ref m_EnvH2[i]);
+                        m_EnvH2Valid[i] = false;
+                    }
+                }
             }
             // B3: drain cooldown map
-            foreach (var kv in m_Cooldown) if (kv.Value.valid) Addressables.Release(kv.Value.h);
+            foreach (var kv in m_Cooldown) if (kv.Value.valid) SafeRelease(kv.Value.h);
             m_Cooldown.Clear();
         }
 
@@ -1116,11 +1703,31 @@ namespace GsplatLod
                 int leaves = m_SogManifest != null && m_SogManifest.Leaves.IsCreated
                     ? m_SogManifest.Leaves.Length : 0;
                 int tracked = m_SogChunkLoader != null ? m_SogChunkLoader.TrackedChunkCount : 0;
-                sb.AppendLine($"GaussianLodStreamAsync (SOG)  leaves={leaves}  visible={m_SogVisibleLeaves}  " +
-                              $"desiredResident={m_SogResidentLeaves}  chunksTracked={tracked}  " +
-                              $"assemblies(total/last)={m_SogAssembliesTotal}/{m_SogAssembliesThisFrame}  " +
-                              $"queue={m_SogAssemblyQueue.Count}");
-                GUI.Label(new Rect(12, 10, 1600, 60), sb.ToString(), style);
+                int draws = GaussianSplatUnifiedWorld.IsUnifiedDrawReady ? 1 : 0;
+                int drawnSplats = 0;
+                if (m_UnifiedWorld != null && m_UnifiedWorld.renderer != null && m_UnifiedWorld.renderer.octree != null)
+                    drawnSplats = m_UnifiedWorld.renderer.octree.visibleSplatCount;
+                var gs = GaussianSplatSettings.instance;
+                bool screenLod = gs != null && gs.m_EnableScreenLod;
+                int poolLod0 = 0, poolLodCoarse = 0;
+                if (m_UnifiedWorld != null)
+                {
+                    foreach (var slot in m_UnifiedWorld.pool.ActiveSlots())
+                    {
+                        if (slot.lodLevel == 0) poolLod0++;
+                        else poolLodCoarse++;
+                    }
+                }
+                string sortMode = GaussianSplatOctree.lastGlobalSortMode;
+                sb.AppendLine($"GaussianLodStreamAsync (SOG unified)  budget={deviceBudget / 1000}K  budgetScale={m_BudgetScale:F2}  " +
+                              $"bootstrap={(m_SogCoarseBootstrap ? "ON" : "off")}  " +
+                              $"resident={m_ResidentSplats / 1000}K  drawn={drawnSplats / 1000}K  slots={m_ResidentChunks}/{leaves}  " +
+                              $"poolLod0={poolLod0}  poolCoarse={poolLodCoarse}  screenLod={screenLod}  " +
+                              $"active={m_SogVisibleLeaves}  frustum={m_SogFrustumVisibleLeaves}  draws={draws}  " +
+                              $"lod0Scale={lod0CoverageScale:F0}  nearLod={m_SogNearStreamLod}/{m_SogNearDesiredLod}/{m_SogNearAsmLod}/{m_SogNearPoolLod}  " +
+                              $"sortMode={sortMode}  asm/frame={m_SogAssembliesThisFrame}  queue={m_SogAssemblyQueue.Count}  " +
+                              $"[F]=maxQ  [+/-]=lod0Scale");
+                GUI.Label(new Rect(12, 10, 1600, 80), sb.ToString(), style);
                 return;
             }
             sb.AppendLine($"GaussianLodStreamAsync (Addressables{(m_UseHierarchy ? ", hierarchy" : "")})  resident={m_ResidentSplats / 1000}K / budget={deviceBudget / 1000}K  slots={m_ResidentChunks}/{maxResidentChunks} of {m_Chunks.Count}  visible={m_VisibleChunks}");
