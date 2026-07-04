@@ -9,7 +9,10 @@ namespace GaussianSplatting.Runtime.Streaming
     public sealed class GaussianSplatUnifiedWorld : MonoBehaviour
     {
         [SerializeField] int m_MaxSplats = 250_000;
-        [SerializeField] bool m_UseUnifiedDraw = true;
+        // Standard per-node draw (like the monolithic reference) renders sharper than the unified
+        // global-sort DrawProcedural path — A/B swap test showed the SAME asset is crisp via standard
+        // draw but soft via unified draw. Route the streamed merged asset through the standard path.
+        [SerializeField] bool m_UseUnifiedDraw = false;
 
         GpuBufferPool m_Pool;
         StreamingLodManager m_LodManager;
