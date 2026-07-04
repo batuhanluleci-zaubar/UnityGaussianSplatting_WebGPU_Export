@@ -51,8 +51,8 @@ namespace GaussianSplatting.Editor.StreamedSog
 
                 scaleBytes = new NativeArray<byte>(new byte[]
                 {
-                    128, 128, 128,   // splat 0
-                    192,  96, 128,   // splat 1
+                    128, 128, 128, 0,   // splat 0 (stride 4)
+                    192,  96, 128, 0,   // splat 1
                 }, Allocator.TempJob);
 
                 sh0Bytes = new NativeArray<byte>(new byte[]
@@ -72,6 +72,7 @@ namespace GaussianSplatting.Editor.StreamedSog
                     codebook    = scalesCodebook,
                     output      = output,
                     splatOffset = 1,
+                    strideBytes = 4,
                 };
                 scalesJob.Schedule(2, 1).Complete();
 

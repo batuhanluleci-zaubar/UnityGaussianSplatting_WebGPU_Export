@@ -187,7 +187,7 @@ namespace GaussianSplatting.Runtime
         // Track which jobs correspond to which data structures
         readonly List<NativeSortJobInfo> m_NativeJobInfos = new();
 
-        // ----- GPU sort wire-in (Vulkan-only; Metal editor path is DEAD by graphicsDeviceType gate) -----
+        // ----- GPU sort (Metal + Vulkan when gpuSortAvailable; unified path uses one global dispatch) -----
         // GpuSorting is a uint-key/uint-payload 8-bit-LSD radix sorter provided by the package
         // (see package/Runtime/GpuSorting.cs + Resources/DeviceRadixSort.compute). It was
         // previously orphan code (zero call sites). We wire it in here for the Vulkan-on-XR path.
@@ -211,6 +211,9 @@ namespace GaussianSplatting.Runtime
         int m_GpuSortDispatchesThisFrame;
         bool m_GpuSortDispatchLoggedOnce;
         bool m_GpuSortDisabledLoggedOnce;
+        List<int> m_GlobalFlattenScratch;
+        bool m_GlobalGpuSortLoggedOnce;
+        static bool s_GlobalGpuSortSessionLogged;
 
         // Alt#1 diagnostic markers — split the GaussianSplatRenderGraph blob into sort vs submit
         // so we can data-drive P3 (unified buffer refactor) vs alternatives. Zero-alloc, safe in
@@ -226,6 +229,7 @@ namespace GaussianSplatting.Runtime
         // the LockBufferForWrite win separately from the per-node List<int>->NativeArray copy loop.
         static readonly ProfilerMarker s_SortAppendCpuMarker = new ProfilerMarker("GaussianSplatOctree.Sort.AppendCpu");       // (d1) strided List<int> -> NativeArray fill
         static readonly ProfilerMarker s_SortAppendUploadMarker = new ProfilerMarker("GaussianSplatOctree.Sort.AppendUpload"); // (d2) UpdateVisibleIndicesBuffer GPU upload
+        static readonly ProfilerMarker s_SortGlobalGpuMarker = new ProfilerMarker("GaussianSplatOctree.SortGlobalGpu");
 
         // Slice 3: per-frame counters for the strided-copy cache.
         //
@@ -309,6 +313,15 @@ namespace GaussianSplatting.Runtime
         public GraphicsBuffer visibleIndicesBuffer => m_VisibleIndicesBuffer;
         public int visibleSplatCount { get; private set; }
 
+        /// <summary>Unified renderer: one global GPU/CPU sort over all visible splats (not per-node).</summary>
+        public bool useGlobalGpuSort;
+
+        /// <summary>Diagnostics: GlobalGPU, GlobalCPU, GlobalEmpty, or PerNode.</summary>
+        public static string lastGlobalSortMode { get; private set; } = "PerNode";
+
+        /// <summary>1 when global GPU sort ran this frame; 0 otherwise.</summary>
+        public int lastGlobalGpuDispatchCount { get; private set; }
+
         // Helper to get splat position directly from global native buffer
         bool TryGetSplatPosition(int originalIndex, out float3 pos)
         {
@@ -364,9 +377,9 @@ namespace GaussianSplatting.Runtime
             // Check if native threading is supported on current platform
             bool isWebPlatform = Application.platform == RuntimePlatform.WebGLPlayer;
             
-            if(enableParallelSorting) 
+            if (enableParallelSorting && !useGlobalGpuSort)
             {
-                // Try to initialize native sorting for supported platforms
+                // Per-node parallel CPU path only; unified global GPU/CPU sort skips native workers.
                 int nativeWorkers = Mathf.Max(1, envCores - 1); // Conservative worker count for all platforms
                 NativeSorting.Initialize(nativeWorkers);
 
@@ -1275,18 +1288,20 @@ namespace GaussianSplatting.Runtime
             // TEMP sub-marker (a): visible-node traversal + m_VisibleNodeRefs.Sort
             m_VisibleNodeRefs.Clear();
             var frustumPlanes = GetCachedFrustumPlanes(camera);
+            var lodSettingsForCull = GaussianSplatSettings.instance;
+            bool skipFrustumCull = lodSettingsForCull != null && lodSettingsForCull.m_OctreeSkipFrustumCull;
             // Slice 2 / Rank 2: root-AABB reject — if the octree root is fully outside the frustum,
             // skip traversal, sort-start, and Append entirely. This is exactly the same TestPlanesAABB
             // that CullNodeRecursive would do at the root; hoisting it lets us also skip the sort-start
             // work below. Uses m_Nodes[0].bounds (root, world-space-equivalent-under-identity-transform)
             // vs camera-derived world-space planes — same semantics as CullNodeRecursive today.
-            if (!GeometryUtility.TestPlanesAABB(frustumPlanes, m_Nodes[0].bounds))
+            if (!skipFrustumCull && !GeometryUtility.TestPlanesAABB(frustumPlanes, m_Nodes[0].bounds))
             {
                 visibleSplatCount = 0;
                 return;
             }
             s_SortCollectMarker.Begin();
-            CollectVisibleNodesWithDistance(0, frustumPlanes, camPosition);
+            CollectVisibleNodesWithDistance(0, frustumPlanes, camPosition, skipFrustumCull);
             // Node-ref sort belongs in (a); it runs on every path.
             // In the parallel paths below it's kicked off after the workers spawn, but the cost is
             // the same, and folding it here gives a clean "traversal + node-ref sort" bucket.
@@ -1304,16 +1319,22 @@ namespace GaussianSplatting.Runtime
                 return;
             }
 
-            // -------- GPU sort (Vulkan-only) --------
-            // Pure additive path. Metal editor: SystemInfo.graphicsDeviceType != Vulkan -> gate false ->
-            // this whole block is DEAD and we fall through to the existing NativeSorting / Task.Run / sequential paths.
-            // Aura (Vulkan): gpuSortAvailable AND kernel-supported AND not latched-disabled -> per-node dispatch.
+            if (useGlobalGpuSort)
+            {
+                SortVisibleSplatsGlobalUnified(camera, camPosition);
+                return;
+            }
+
+            lastGlobalSortMode = "PerNode";
+            lastGlobalGpuDispatchCount = 0;
+
+            // -------- GPU sort (per-node; unified global path handled above) --------
+            // Metal + Vulkan: gpuSortAvailable AND kernel-supported AND not latched-disabled.
             // Any construction failure latches m_GpuSortDisabled for the session; any per-frame throw
             // decays into the CPU fallback below via a try/catch around the dispatch loop.
             var _gpuSortSettings = GaussianSplatSettings.instance;
             bool _gpuGate = _gpuSortSettings != null
                             && _gpuSortSettings.gpuSortAvailable
-                            && SystemInfo.graphicsDeviceType == GraphicsDeviceType.Vulkan
                             && !m_GpuSortDisabled;
             bool _gpuSortHandled = false;
             if (_gpuGate && TryEnsureGpuSorter(_gpuSortSettings))
@@ -1342,7 +1363,7 @@ namespace GaussianSplatting.Runtime
                     if (!m_GpuSortDispatchLoggedOnce && m_GpuSortDispatchesThisFrame > 0)
                     {
                         m_GpuSortDispatchLoggedOnce = true;
-                        Debug.Log($"[GaussianSplatOctree] GPU sort active on Vulkan (first frame: {m_GpuSortDispatchesThisFrame} dispatches).");
+                        Debug.Log($"[GaussianSplatOctree] Per-node GPU sort active on {SystemInfo.graphicsDeviceType} (first frame: {m_GpuSortDispatchesThisFrame} dispatches).");
                     }
                 }
                 // If _gpuSortHandled is false (exception path), fall through to CPU below.
@@ -2342,7 +2363,7 @@ namespace GaussianSplatting.Runtime
                 splatIndices[i] = m_DistanceSortArray[i].index;
         }
 
-        // ------- GPU sort helpers (Vulkan-only wire; Metal editor path is dead) -------
+        // ------- GPU sort helpers (Metal + Vulkan; unified global sort or per-node dispatch) -------
 
         // Lazy construction of the GpuSorting instance. On first attempt, builds and probes
         // per-kernel cs.IsSupported via GpuSorting.Valid; if any kernel is unsupported
@@ -2414,6 +2435,143 @@ namespace GaussianSplatting.Runtime
             m_GpuSortCapacity = needed;
         }
 
+        // Unified path: flatten visible node splats (with screen LOD stride) into one list.
+        void FlattenVisibleSplatIndices(Vector3 camPosition, bool lodOn, float lodFocalPx, float lodFullPx,
+            int lodMaxStride, List<int> output)
+        {
+            int refCount = m_VisibleNodeRefs.Count;
+            for (int i = 0; i < refCount; i++)
+            {
+                var nodeRef = m_VisibleNodeRefs[i];
+                if (nodeRef.nodeIndex < 0 || nodeRef.nodeIndex >= m_Nodes.Count) continue;
+                var node = m_Nodes[nodeRef.nodeIndex];
+                if (node?.splatIndices == null || node.splatIndices.Count == 0) continue;
+
+                int step = 1;
+                if (lodOn)
+                {
+                    float dist = Vector3.Distance(node.bounds.center, camPosition);
+                    Vector3 sz = node.bounds.size;
+                    float worldExtent = Mathf.Max(sz.x, Mathf.Max(sz.y, sz.z));
+                    float projPx = worldExtent * lodFocalPx / Mathf.Max(dist, 0.001f);
+                    if (projPx < lodFullPx)
+                        step = Mathf.Clamp(Mathf.RoundToInt(lodFullPx / Mathf.Max(projPx, 0.01f)), 1, lodMaxStride);
+                }
+
+                int nodeCount = node.splatIndices.Count;
+                for (int j = 0; j < nodeCount; j += step)
+                    output.Add(node.splatIndices[j]);
+            }
+        }
+
+        void SortVisibleSplatsGlobalUnified(Camera camera, Vector3 camPosition)
+        {
+            using var _ = s_SortGlobalGpuMarker.Auto();
+            lastGlobalGpuDispatchCount = 0;
+
+            var lodSettings = GaussianSplatSettings.instance;
+            bool lodOn = lodSettings != null && lodSettings.m_EnableScreenLod;
+            float lodFocalPx = camera.pixelHeight / (2f * Mathf.Tan(camera.fieldOfView * 0.5f * Mathf.Deg2Rad));
+            float lodFullPx = lodOn ? Mathf.Max(1f, lodSettings.m_LodFullDetailPixels) : 0f;
+            int lodMaxStride = lodOn ? Mathf.Max(1, lodSettings.m_LodMaxStride) : 1;
+            int lodBudget = lodOn ? Mathf.Max(0, lodSettings.m_LodSplatBudget) : 0;
+
+            m_GlobalFlattenScratch ??= new List<int>(4096);
+            m_GlobalFlattenScratch.Clear();
+            FlattenVisibleSplatIndices(camPosition, lodOn, lodFocalPx, lodFullPx, lodMaxStride, m_GlobalFlattenScratch);
+            for (int i = 0; i < m_OthersIndices.Count; i++)
+                m_GlobalFlattenScratch.Add(m_OthersIndices[i]);
+
+            int count = m_GlobalFlattenScratch.Count;
+            if (count == 0)
+            {
+                visibleSplatCount = 0;
+                lastGlobalSortMode = "GlobalEmpty";
+                return;
+            }
+
+            bool sortedOnGpu = false;
+            bool gpuGate = lodSettings != null && lodSettings.gpuSortAvailable && !m_GpuSortDisabled;
+            if (gpuGate && count >= 2 && TryEnsureGpuSorter(lodSettings))
+            {
+                try
+                {
+                    GpuSortIndexList(m_GlobalFlattenScratch, camPosition, count);
+                    sortedOnGpu = true;
+                    lastGlobalGpuDispatchCount = 1;
+                    lastGlobalSortMode = "GlobalGPU";
+                    if (!s_GlobalGpuSortSessionLogged)
+                    {
+                        s_GlobalGpuSortSessionLogged = true;
+                        Debug.Log($"[GaussianSplatOctree] Global GPU sort active on {SystemInfo.graphicsDeviceType}");
+                    }
+                    m_GlobalGpuSortLoggedOnce = true;
+                }
+                catch (Exception e)
+                {
+                    m_GpuSortDisabled = true;
+                    if (!m_GpuSortDisabledLoggedOnce)
+                    {
+                        m_GpuSortDisabledLoggedOnce = true;
+                        Debug.LogWarning($"[GaussianSplatOctree] Global GPU sort failed, falling back to CPU: {e.Message}");
+                    }
+                }
+            }
+
+            if (!sortedOnGpu)
+            {
+                SortVisibleSplatsGlobalCpu(camPosition, m_GlobalFlattenScratch, count);
+                lastGlobalSortMode = "GlobalCPU";
+            }
+
+            // Budget cap after sort: list is front-to-back, keep nearest splats.
+            if (lodBudget > 0 && count > lodBudget)
+                count = lodBudget;
+
+            EnsureVisibleSplatIndicesCapacity(count);
+            if (!m_VisibleSplatIndicesValid || !m_VisibleSplatIndices.IsCreated)
+            {
+                visibleSplatCount = 0;
+                return;
+            }
+
+            for (int i = 0; i < count; i++)
+                m_VisibleSplatIndices[i] = m_GlobalFlattenScratch[i];
+            visibleSplatCount = count;
+
+            for (int i = 0; i < m_VisibleNodeRefs.Count; i++)
+            {
+                int ni = m_VisibleNodeRefs[i].nodeIndex;
+                if (ni < 0 || ni >= m_Nodes.Count) continue;
+                var node = m_Nodes[ni];
+                node.isSorted = true;
+                node.lastSortCameraPosition = camPosition;
+            }
+
+            s_SortAppendUploadMarker.Begin();
+            UpdateVisibleIndicesBuffer();
+            s_SortAppendUploadMarker.End();
+        }
+
+        void SortVisibleSplatsGlobalCpu(Vector3 camPosition, List<int> indices, int count)
+        {
+            if (count <= 1) return;
+            if (m_DistanceSortArray == null || m_DistanceSortArray.Length < count)
+                m_DistanceSortArray = new (float distance, int index)[Mathf.NextPowerOfTwo(count)];
+            for (int i = 0; i < count; i++)
+            {
+                int originalSplatIdx = indices[i];
+                if (TryGetSplatPosition(originalSplatIdx, out float3 splatPos))
+                    m_DistanceSortArray[i] = (((Vector3)splatPos - camPosition).sqrMagnitude, originalSplatIdx);
+                else
+                    m_DistanceSortArray[i] = (0f, originalSplatIdx);
+            }
+            Array.Sort(m_DistanceSortArray, 0, count,
+                Comparer<(float distance, int index)>.Create((a, b) => a.distance.CompareTo(b.distance)));
+            for (int i = 0; i < count; i++)
+                indices[i] = m_DistanceSortArray[i].index;
+        }
+
         // Per-node dispatch driver. Outliers stay on the CPU path (they're already handled by
         // SortOutliers in the sequential branch conceptually; we mirror that here). Small nodes
         // stay on CPU (launch + GetData overhead beats CPU sort below k_GpuSortMinSize).
@@ -2467,20 +2625,24 @@ namespace GaussianSplatting.Runtime
         // correct GetData source.
         void GpuSortOneNode(List<int> splatIndices, Vector3 camPosition, int count)
         {
+            GpuSortIndexList(splatIndices, camPosition, count);
+            m_GpuSortDispatchesThisFrame++;
+        }
+
+        void GpuSortIndexList(List<int> indices, Vector3 camPosition, int count)
+        {
             EnsureGpuSortCapacity(count);
 
             var keyScratch = m_GpuKeyScratch;
             var payScratch = m_GpuPayScratch;
             for (int i = 0; i < count; i++)
             {
-                int originalSplatIdx = splatIndices[i];
+                int originalSplatIdx = indices[i];
                 float dist;
                 if (TryGetSplatPosition(originalSplatIdx, out float3 splatPos))
                     dist = ((Vector3)splatPos - camPosition).sqrMagnitude;
                 else
                     dist = 0f;
-                // asuint on a non-negative float is monotonic in the IEEE-754 bit pattern:
-                // sign bit is 0, and (exponent<<23 | mantissa) increases with the value.
                 keyScratch[i] = math.asuint(dist);
                 payScratch[i] = (uint)originalSplatIdx;
             }
@@ -2499,12 +2661,9 @@ namespace GaussianSplatting.Runtime
             m_GpuSorter.Dispatch(m_GpuSortCmd, args);
             Graphics.ExecuteCommandBuffer(m_GpuSortCmd);
 
-            // 4 passes is even -> sorted payload ends back in inputValues. Read from m_GpuSortPayload.
             m_GpuSortPayload.GetData(payScratch, 0, 0, count);
             for (int i = 0; i < count; i++)
-                splatIndices[i] = (int)payScratch[i];
-
-            m_GpuSortDispatchesThisFrame++;
+                indices[i] = (int)payScratch[i];
         }
 
         // Called from Dispose() alongside NativeSorting.Shutdown().
@@ -2520,7 +2679,7 @@ namespace GaussianSplatting.Runtime
             m_GpuPayScratch = null;
         }
 
-        void CollectVisibleNodesWithDistance(int nodeIndex, Plane[] frustumPlanes, Vector3 camPosition)
+        void CollectVisibleNodesWithDistance(int nodeIndex, Plane[] frustumPlanes, Vector3 camPosition, bool skipFrustumCull = false)
         {
             m_TraversalStack.Clear();
             
@@ -2541,7 +2700,7 @@ namespace GaussianSplatting.Runtime
                 var node = m_Nodes[currentNodeIndex];
                 
                 // Frustum culling - early exit if node not visible
-                if (!GeometryUtility.TestPlanesAABB(frustumPlanes, node.bounds))
+                if (!skipFrustumCull && !GeometryUtility.TestPlanesAABB(frustumPlanes, node.bounds))
                     continue;
                 
                 if (node.isLeaf)

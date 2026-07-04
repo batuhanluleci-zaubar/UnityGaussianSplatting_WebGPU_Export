@@ -98,6 +98,42 @@ namespace GsplatLod.Editor
             RunDefaultBuild(streamer);
         }
 
+        [MenuItem("Gaussian Splatting/Wire All LOD Renderer Assets On Streamer")]
+        public static void WireAllOnDefaultPrefab()
+        {
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(kDefaultPrefab);
+            var streamer = prefab != null ? prefab.GetComponent<GaussianLodStreamAsync>() : null;
+            if (streamer == null)
+            {
+                Debug.LogError($"[HierarchyBuilder] Prefab not found or has no streamer: {kDefaultPrefab}");
+                return;
+            }
+
+            var contents = PrefabUtility.LoadPrefabContents(kDefaultPrefab);
+            try
+            {
+                streamer = contents.GetComponent<GaussianLodStreamAsync>();
+                int wired = GaussianLodHierarchyBuilder.WireAllPreviewAssets(streamer);
+                GaussianLodGlobalPreview.Apply(streamer, streamer.EditorGlobalPreviewLod);
+                PrefabUtility.SaveAsPrefabAsset(contents, kDefaultPrefab);
+                Debug.Log($"[HierarchyBuilder] Wired {wired} LOD renderer assets on prefab.");
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+
+            foreach (var sceneStreamer in Object.FindObjectsByType<GaussianLodStreamAsync>(
+                         FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                if (sceneStreamer == streamer) continue;
+                int n = GaussianLodHierarchyBuilder.WireAllPreviewAssets(sceneStreamer);
+                GaussianLodGlobalPreview.Apply(sceneStreamer, sceneStreamer.EditorGlobalPreviewLod);
+                EditorUtility.SetDirty(sceneStreamer);
+                Debug.Log($"[HierarchyBuilder] Wired {n} LOD renderer assets on {sceneStreamer.gameObject.scene.name}.");
+            }
+        }
+
         [MenuItem("Gaussian Splatting/Build LOD Hierarchy On GaussianLodStreamAsync Prefab")]
         public static void BuildOnDefaultPrefab()
         {

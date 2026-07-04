@@ -102,9 +102,9 @@ namespace GaussianSplatting.Runtime.StreamedSog
         [ReadOnly] public NativeArray<byte> labelsHi;
 
         /// <summary>
-        /// Centroid atlas as raw R-channel bytes (one component per pixel).
-        /// Layout: row v of length centroidWidth == 64 * shCoeffs.
-        /// Length MUST equal centroidWidth * centroidHeight.
+        /// Centroid atlas as interleaved RGB bytes (3 bytes per pixel, no alpha).
+        /// Layout: row v of length centroidWidth == 64 * shCoeffs pixels.
+        /// Length MUST equal centroidWidth * centroidHeight * 3.
         /// </summary>
         [ReadOnly] public NativeArray<byte> centroids;
 
@@ -143,10 +143,9 @@ namespace GaussianSplatting.Runtime.StreamedSog
 
             int rowBase = v * centroidWidth + u;
 
-            // Dequantise shCoeffs * 3 values (RGB per SH coefficient), consecutive along U.
-            // SuperSplat writes the three colour channels of a single SH coefficient into
-            // three adjacent atlas columns, so a single row block of shCoeffs*3 bytes
-            // covers all channels for this label. This matches the wuyize25 fork layout.
+            // Dequantise shCoeffs Vector3s: one atlas pixel per SH coefficient (RGB in one pixel).
+            // SuperSplat SOG v2 packs each coefficient triplet into a single pixel's RGB channels;
+            // u = (label % 64) * shCoeffs, v = label / 64, width = 64 * shCoeffs.
 
             var splat = output[splatOffset + i];
 
@@ -155,7 +154,7 @@ namespace GaussianSplatting.Runtime.StreamedSog
             // Order matches InputSplatData.sh1..shF.
             for (int c = 0; c < shCoeffs; c++)
             {
-                int baseIdx = rowBase + c * 3;
+                int baseIdx = (rowBase + c) * 3;
                 float r = codebook[centroids[baseIdx + 0]];
                 float g = codebook[centroids[baseIdx + 1]];
                 float b = codebook[centroids[baseIdx + 2]];
@@ -217,7 +216,7 @@ namespace GaussianSplatting.Runtime.StreamedSog
 
             var labelsLo  = new NativeArray<byte>(splatCount, Allocator.TempJob);
             var labelsHi  = new NativeArray<byte>(splatCount, Allocator.TempJob);
-            var centroids = new NativeArray<byte>(width * height, Allocator.TempJob);
+            var centroids = new NativeArray<byte>(width * height * 3, Allocator.TempJob);
             var codebook  = new NativeArray<float>(256, Allocator.TempJob);
             var output    = new NativeArray<InputSplatData>(splatCount, Allocator.TempJob);
             try
@@ -229,10 +228,10 @@ namespace GaussianSplatting.Runtime.StreamedSog
                 // codebook[b] = b * 0.01f  (byte 10 -> 0.10f)
                 for (int b = 0; b < 256; b++) codebook[b] = b * 0.01f;
 
-                // label 0: u=0, first triple at columns 0,1,2  => bytes 10,20,30
+                // label 0: u=0, pixel 0 RGB => bytes 10,20,30
                 centroids[0] = 10; centroids[1] = 20; centroids[2] = 30;
-                // label 1: u=3, next triple at columns 3,4,5  => bytes 40,50,60
-                centroids[3] = 40; centroids[4] = 50; centroids[5] = 60;
+                // label 1: u=3, pixel 3 RGB => bytes 40,50,60
+                centroids[9] = 40; centroids[10] = 50; centroids[11] = 60;
 
                 if (!SogDecoderConstants.ValidateCentroidWidth(bands, width, "selftest"))
                 {

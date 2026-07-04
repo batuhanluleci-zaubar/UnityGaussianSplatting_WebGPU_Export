@@ -66,6 +66,9 @@ namespace GaussianSplatting.Runtime.StreamedSog
         [NativeDisableParallelForRestriction]
         public NativeArray<InputSplatData> output;
 
+        /// <summary>splat-transform SOG → Unity SPZ frame (see SogCodebooks.PlayCanvasToUnityPos).</summary>
+        public bool playCanvasToUnity;
+
         public void Execute(int index)
         {
             int b = index * strideBytes;
@@ -77,6 +80,8 @@ namespace GaussianSplatting.Runtime.StreamedSog
 
             float3 lerped = math.lerp(mins, maxs, new float3(nx, ny, nz));
             float3 world  = SogCodebooks.InvLogTransform(lerped);
+            if (playCanvasToUnity)
+                world = SogCodebooks.PlayCanvasToUnityPos(world);
 
             int outIdx = splatOffset + index;
             var s = output[outIdx];
@@ -105,6 +110,8 @@ namespace GaussianSplatting.Runtime.StreamedSog
         [NativeDisableParallelForRestriction]
         public NativeArray<InputSplatData> output;
 
+        public bool playCanvasToUnity;
+
         public void Execute(int index)
         {
             int b = index * 4;
@@ -113,6 +120,8 @@ namespace GaussianSplatting.Runtime.StreamedSog
                 quats[b + 1],
                 quats[b + 2],
                 quats[b + 3]);
+            if (playCanvasToUnity)
+                q = SogCodebooks.PlayCanvasToUnityQuat(q);
 
             int outIdx = splatOffset + index;
             var s = output[outIdx];

@@ -24,7 +24,7 @@ namespace GaussianSplatting.Editor
         const string kPrefQuality = "nesnausk.GaussianSplatting.CreatorQuality";
         const string kPrefOutputFolder = "nesnausk.GaussianSplatting.CreatorOutputFolder";
 
-        enum DataQuality
+        public enum DataQuality
         {
             VeryHigh,
             High,
@@ -32,6 +32,39 @@ namespace GaussianSplatting.Editor
             Low,
             VeryLow,
             Custom,
+        }
+
+        public struct ImportSettings
+        {
+            public string inputFile;
+            public string outputFolder;
+            public DataQuality quality;
+            public bool importCameras;
+            /// <summary>Skip per-import outlier rejection (chunk LOD0 PLY from gsplat_lod bake).</summary>
+            public bool skipOutlierFilter;
+        }
+
+        /// <summary>Import a single PLY/SPZ into a GaussianSplatAsset. Used by batch LOD importers.</summary>
+        public static bool TryImportFromFile(in ImportSettings settings, out string errorMessage)
+        {
+            var w = CreateInstance<GaussianSplatAssetCreator>();
+            return w.ImportFile(settings, out errorMessage);
+        }
+
+        bool m_SkipOutlierFilter;
+
+        bool ImportFile(in ImportSettings settings, out string errorMessage)
+        {
+            m_InputFile = settings.inputFile;
+            m_OutputFolder = settings.outputFolder;
+            m_Quality = settings.quality;
+            m_ImportCameras = settings.importCameras;
+            m_SkipOutlierFilter = settings.skipOutlierFilter;
+            m_ErrorMessage = null;
+            ApplyQualityLevel();
+            CreateAsset();
+            errorMessage = m_ErrorMessage;
+            return string.IsNullOrEmpty(m_ErrorMessage);
         }
 
         readonly FilePickerControl m_FilePicker = new();
@@ -107,6 +140,21 @@ namespace GaussianSplatting.Editor
             else
                 GUILayout.Space(EditorGUIUtility.singleLineHeight);
 
+            if (m_PrevVertexCount > GaussianSplatAsset.kMaxSplats)
+            {
+                EditorGUILayout.HelpBox(
+                    $"Splat count exceeds kMaxSplats ({GaussianSplatAsset.kMaxSplats:N0}). " +
+                    "Use tools/gsplat_lod to merge/chunk, or reduce the source file.",
+                    MessageType.Warning);
+            }
+            else if (m_PrevVertexCount > 2_000_000 && m_Quality == DataQuality.VeryHigh)
+            {
+                EditorGUILayout.HelpBox(
+                    "Very High (Float32, no chunking) is fragile for multi-million splat scenes — " +
+                    "position outliers break bounds/octree. Prefer Medium or High quality.",
+                    MessageType.Info);
+            }
+
             EditorGUILayout.Space();
             GUILayout.Label("Output", EditorStyles.boldLabel);
             rect = EditorGUILayout.GetControlRect(true);
@@ -175,7 +223,13 @@ namespace GaussianSplatting.Editor
             GUILayout.Space(30);
             if (GUILayout.Button("Create Asset"))
             {
-                CreateAsset();
+                ImportFile(new ImportSettings
+                {
+                    inputFile = m_InputFile,
+                    outputFolder = m_OutputFolder,
+                    quality = m_Quality,
+                    importCameras = m_ImportCameras,
+                }, out _);
             }
             GUILayout.Space(30);
             GUILayout.EndHorizontal();
@@ -262,22 +316,41 @@ namespace GaussianSplatting.Editor
 
             EditorUtility.DisplayProgressBar(kProgressTitle, "Reading data files", 0.0f);
             GaussianSplatAsset.CameraInfo[] cameras = LoadJsonCamerasFile(m_InputFile, m_ImportCameras);
-            using NativeArray<InputSplatData> inputSplats = LoadInputSplatFile(m_InputFile);
-            if (inputSplats.Length == 0)
+            NativeArray<InputSplatData> loadedSplats = LoadInputSplatFile(m_InputFile);
+            if (loadedSplats.Length == 0)
             {
+                if (loadedSplats.IsCreated) loadedSplats.Dispose();
                 EditorUtility.ClearProgressBar();
                 return;
             }
 
-            float3 boundsMin, boundsMax;
-            var boundsJob = new CalcBoundsJob
+            if (loadedSplats.Length > GaussianSplatAsset.kMaxSplats)
             {
-                m_BoundsMin = &boundsMin,
-                m_BoundsMax = &boundsMax,
-                m_SplatData = inputSplats
-            };
-            boundsJob.Schedule().Complete();
+                int count = loadedSplats.Length;
+                loadedSplats.Dispose();
+                m_ErrorMessage = $"Splat count {count:N0} exceeds limit {GaussianSplatAsset.kMaxSplats:N0}. " +
+                                 "Merge/chunk the scene first (tools/gsplat_lod).";
+                EditorUtility.ClearProgressBar();
+                return;
+            }
 
+            SplatImportRobustBounds.Result filtered;
+            if (m_SkipOutlierFilter)
+            {
+                EditorUtility.DisplayProgressBar(kProgressTitle, "Computing bounds (no outlier filter)", 0.02f);
+                filtered = SplatImportRobustBounds.Passthrough(loadedSplats);
+            }
+            else
+            {
+                EditorUtility.DisplayProgressBar(kProgressTitle, "Filtering position outliers", 0.02f);
+                filtered = SplatImportRobustBounds.FilterAndReport(loadedSplats);
+            }
+            NativeArray<InputSplatData> inputSplats = filtered.splats;
+            float3 boundsMin = filtered.boundsMin;
+            float3 boundsMax = filtered.boundsMax;
+
+            try
+            {
             EditorUtility.DisplayProgressBar(kProgressTitle, "Morton reordering", 0.05f);
             ReorderMorton(inputSplats, boundsMin, boundsMax);
 
@@ -334,9 +407,15 @@ namespace GaussianSplatting.Editor
 
             EditorUtility.DisplayProgressBar(kProgressTitle, "Saving assets", 0.99f);
             AssetDatabase.SaveAssets();
-            EditorUtility.ClearProgressBar();
 
             Selection.activeObject = savedAsset;
+            }
+            finally
+            {
+                if (inputSplats.IsCreated)
+                    inputSplats.Dispose();
+                EditorUtility.ClearProgressBar();
+            }
         }
 
         NativeArray<InputSplatData> LoadInputSplatFile(string filePath)
@@ -552,6 +631,7 @@ namespace GaussianSplatting.Editor
                 {
                     InputSplatData s = splatData[i];
 
+                    s.scale = GaussianUtils.ClampScaleAnisotropy(s.scale);
                     // transform scale to be more uniformly distributed
                     s.scale = math.pow(s.scale, 1.0f / 8.0f);
                     // transform opacity to be more unformly distributed

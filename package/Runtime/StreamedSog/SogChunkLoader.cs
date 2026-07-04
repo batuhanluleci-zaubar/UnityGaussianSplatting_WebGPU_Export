@@ -213,7 +213,7 @@ namespace GaussianSplatting.Runtime.StreamedSog
 
         string ResolveDirectoryPath(int fileIdx)
         {
-            string entry = m_Filenames[fileIdx] ?? string.Empty;
+            string entry = SogLodMeta.NormalizeChunkDir(m_Filenames[fileIdx] ?? string.Empty);
             if (Path.IsPathRooted(entry)) return entry;
             return string.IsNullOrEmpty(m_RootDirectory) ? entry : Path.Combine(m_RootDirectory, entry);
         }
@@ -331,8 +331,8 @@ namespace GaussianSplatting.Runtime.StreamedSog
                 labels.Dispose();
 
                 DecodeWebP(dirPath, meta.ShN.Files[1], out var centroidsRgba, out res.ShNCentroidsWidth, out res.ShNCentroidsHeight);
-                // centroid atlas is single-channel — we only need the R byte per pixel.
-                ExtractRedChannel(centroidsRgba, res.ShNCentroidsWidth * res.ShNCentroidsHeight,
+                // Centroid atlas: one RGB triplet per pixel (SuperSplat SOG v2).
+                ExtractRgbChannels(centroidsRgba, res.ShNCentroidsWidth * res.ShNCentroidsHeight,
                     out res.ShNCentroids);
                 centroidsRgba.Dispose();
 
@@ -382,6 +382,19 @@ namespace GaussianSplatting.Runtime.StreamedSog
             r = new NativeArray<byte>(pixelCount, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
             for (int i = 0; i < pixelCount; i++)
                 r[i] = rgba[i * 4];
+        }
+
+        static void ExtractRgbChannels(NativeArray<byte> rgba, int pixelCount, out NativeArray<byte> rgb)
+        {
+            rgb = new NativeArray<byte>(pixelCount * 3, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            for (int i = 0; i < pixelCount; i++)
+            {
+                int src = i * 4;
+                int dst = i * 3;
+                rgb[dst + 0] = rgba[src + 0];
+                rgb[dst + 1] = rgba[src + 1];
+                rgb[dst + 2] = rgba[src + 2];
+            }
         }
 
         /// <summary>

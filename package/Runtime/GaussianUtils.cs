@@ -22,6 +22,19 @@ namespace GaussianSplatting.Runtime
             return math.abs(math.exp(logScale));
         }
 
+        /// <summary>
+        /// Raise smallest scale axes so aspect ratio stays bounded (kills needle streaks).
+        /// Applied at import for SPZ and SOG paths before Norm11 chunk encoding.
+        /// </summary>
+        public static float3 ClampScaleAnisotropy(float3 scale, float maxAspect = 6f)
+        {
+            float maxS = math.max(scale.x, math.max(scale.y, scale.z));
+            if (!(maxS > 0f) || maxAspect <= 1f)
+                return scale;
+            float floorS = maxS / maxAspect;
+            return math.max(scale, new float3(floorS, floorS, floorS));
+        }
+
         public static float SquareCentered01(float x)
         {
             x -= 0.5f;

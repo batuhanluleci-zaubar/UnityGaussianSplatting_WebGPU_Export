@@ -13,7 +13,7 @@ namespace GaussianSplatting.Runtime
         public const int kCurrentVersion = 2023_10_20;
         public const int kChunkSize = 256;
         public const int kTextureWidth = 2048; // allows up to 32M splats on desktop GPU (2k width x 16k height)
-        public const int kMaxSplats = 8_600_000; // mostly due to 2GB GPU buffer size limit when exporting a splat (2GB / 248B is just over 8.6M)
+        public const int kMaxSplats = 10_000_000; // SPZ header limit; 2048×4752 texture fits ~9.7M color slots
 
         [SerializeField] int m_FormatVersion;
         [SerializeField] int m_SplatCount;
@@ -125,7 +125,41 @@ namespace GaussianSplatting.Runtime
             m_OtherData = dataOther;
             m_ColorData = dataColor;
             m_SHData = dataSh;
+            m_RuntimePosBytes = null;
+            m_RuntimeOtherBytes = null;
+            m_RuntimeColorBytes = null;
+            m_RuntimeSHBytes = null;
+            m_RuntimeChunkBytes = null;
         }
+
+        // Runtime streaming path — byte blobs built without AssetDatabase TextAssets.
+        [NonSerialized] byte[] m_RuntimePosBytes;
+        [NonSerialized] byte[] m_RuntimeOtherBytes;
+        [NonSerialized] byte[] m_RuntimeColorBytes;
+        [NonSerialized] byte[] m_RuntimeSHBytes;
+        [NonSerialized] byte[] m_RuntimeChunkBytes;
+
+        public bool hasRuntimeByteData => m_RuntimePosBytes != null;
+
+        public void SetRuntimeByteData(byte[] pos, byte[] other, byte[] color, byte[] sh, byte[] chunk)
+        {
+            m_RuntimePosBytes = pos;
+            m_RuntimeOtherBytes = other;
+            m_RuntimeColorBytes = color;
+            m_RuntimeSHBytes = sh;
+            m_RuntimeChunkBytes = chunk;
+            m_PosData = null;
+            m_OtherData = null;
+            m_ColorData = null;
+            m_SHData = null;
+            m_ChunkData = null;
+        }
+
+        public byte[] GetPosBytes() => m_RuntimePosBytes ?? (m_PosData != null ? m_PosData.bytes : null);
+        public byte[] GetOtherBytes() => m_RuntimeOtherBytes ?? (m_OtherData != null ? m_OtherData.bytes : null);
+        public byte[] GetColorBytes() => m_RuntimeColorBytes ?? (m_ColorData != null ? m_ColorData.bytes : null);
+        public byte[] GetSHBytes() => m_RuntimeSHBytes ?? (m_SHData != null ? m_SHData.bytes : null);
+        public byte[] GetChunkBytes() => m_RuntimeChunkBytes ?? (m_ChunkData != null ? m_ChunkData.bytes : null);
 
         public static int GetOtherSizeNoSHIndex(VectorFormat scaleFormat)
         {

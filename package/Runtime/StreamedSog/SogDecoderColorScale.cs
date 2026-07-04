@@ -43,15 +43,16 @@ namespace GaussianSplatting.Runtime.StreamedSog
     [BurstCompile]
     public struct DecodeScalesJob : IJobParallelFor
     {
-        [ReadOnly] public NativeArray<byte>  scales;      // raw quantised bytes, layout [s0.x s0.y s0.z s1.x ...]
+        [ReadOnly] public NativeArray<byte>  scales;      // raw quantised bytes per splat
         [ReadOnly] public NativeArray<float> codebook;    // 256 entries of log-scales
         [NativeDisableParallelForRestriction]
         public NativeArray<InputSplatData>   output;
         public int splatOffset;
+        public int strideBytes;
 
         public void Execute(int index)
         {
-            int b = index * 3;
+            int b = index * math.max(1, strideBytes);
             byte bx = scales[b + 0];
             byte by = scales[b + 1];
             byte bz = scales[b + 2];
@@ -61,7 +62,8 @@ namespace GaussianSplatting.Runtime.StreamedSog
             float lz = codebook[bz];
 
             var s = output[splatOffset + index];
-            s.scale = new Vector3(math.exp(lx), math.exp(ly), math.exp(lz));
+            float3 scale = new float3(math.exp(lx), math.exp(ly), math.exp(lz));
+            s.scale = new Vector3(scale.x, scale.y, scale.z);
             output[splatOffset + index] = s;
         }
     }
@@ -75,10 +77,10 @@ namespace GaussianSplatting.Runtime.StreamedSog
     /// sh0.Length MUST equal <c>output.Length * 4</c> (or at least
     /// <c>(splatOffset + iterationCount) * 4</c>); codebook.Length MUST be 256.
     ///
-    /// <c>storeAsLogit</c>: SuperSplat V2 assets store the sigmoided alpha; the
-    /// baker/renderer pipeline in this repo expects the raw pre-sigmoid (logit)
-    /// value in <c>InputSplatData.opacity</c>. Pass <c>true</c> when reading
-    /// SuperSplat V2 chunks.
+    /// <c>storeAsLogit</c>: when true, applies SigmoidInvOpacity to the alpha byte
+    /// (legacy SuperSplat V2 logit-in-InputSplatData path). The gsplat_lod baker
+    /// stores post-sigmoid 0..1 in the alpha byte — pass <c>false</c> for that path
+    /// so RuntimeSplatAssetBuilder.CalcChunkDataJob receives sigmoid opacity (SPZ parity).
     /// </summary>
     [BurstCompile]
     public struct DecodeSh0Job : IJobParallelFor

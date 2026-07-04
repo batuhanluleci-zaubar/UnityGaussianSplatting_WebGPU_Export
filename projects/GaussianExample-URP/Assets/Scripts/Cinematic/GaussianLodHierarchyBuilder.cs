@@ -26,6 +26,13 @@ namespace GsplatLod
             public bool assignPreviewAssets;
             public bool clearExisting;
             public string chunksRootName;
+            /// <summary>Refresh only slots in [min,max]. -1 = all levels.</summary>
+            public int refreshLodMin;
+            public int refreshLodMax;
+            /// <summary>When disk asset is missing, keep the slot's existing previewAsset.</summary>
+            public bool preserveExistingPreviewWhenMissing;
+            /// <summary>After refresh/build, apply this global preview LOD (-1 = streamer default).</summary>
+            public int applyPreviewLodLevel;
         }
 
         public struct BuildResult
@@ -65,6 +72,170 @@ namespace GsplatLod
             {
                 if (prefabContents != null)
                     PrefabUtility.UnloadPrefabContents(prefabContents);
+            }
+        }
+
+        /// <summary>
+        /// Updates previewAsset / metadata on existing Chunk_N / LOD* slots without recreating hierarchy.
+        /// </summary>
+        public static BuildResult RefreshPreviewAssets(GaussianLodStreamAsync streamer, BuildOptions opts)
+        {
+            if (streamer == null)
+                return Fail("No streamer target.");
+
+            string prefabPath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(streamer.gameObject);
+            bool editingPrefabAsset = !string.IsNullOrEmpty(prefabPath)
+                && AssetDatabase.GetAssetPath(streamer.gameObject) == prefabPath;
+            GameObject prefabContents = null;
+            if (editingPrefabAsset)
+            {
+                prefabContents = PrefabUtility.LoadPrefabContents(prefabPath);
+                streamer = prefabContents.GetComponent<GaussianLodStreamAsync>();
+                if (streamer == null)
+                {
+                    PrefabUtility.UnloadPrefabContents(prefabContents);
+                    return Fail("Prefab has no GaussianLodStreamAsync.");
+                }
+            }
+
+            try
+            {
+                return RefreshPreviewAssetsInternal(streamer, opts, prefabPath, prefabContents);
+            }
+            finally
+            {
+                if (prefabContents != null)
+                    PrefabUtility.UnloadPrefabContents(prefabContents);
+            }
+        }
+
+        static BuildResult RefreshPreviewAssetsInternal(GaussianLodStreamAsync streamer, BuildOptions opts,
+            string prefabPath, GameObject prefabContents)
+        {
+            opts.manifestPath = LodManifestResolver.Resolve(opts.manifestPath ?? streamer.manifestPath, "[HierarchyBuilder]");
+            if (string.IsNullOrEmpty(opts.manifestPath) || !File.Exists(opts.manifestPath))
+                return Fail($"Manifest not found: '{opts.manifestPath}'");
+
+            LodManifest man;
+            try { man = JsonUtility.FromJson<LodManifest>(File.ReadAllText(opts.manifestPath)); }
+            catch (Exception ex) { return Fail($"Manifest parse error: {ex.Message}"); }
+
+            if (!LodManifestValidator.Validate(man, "[HierarchyBuilder]", out var vErr))
+                return Fail(vErr);
+
+            string assetFolder = string.IsNullOrEmpty(opts.assetFolder) ? "Assets/GaussianAssets" : opts.assetFolder;
+            string rootName = string.IsNullOrEmpty(opts.chunksRootName) ? kDefaultChunksRootName : opts.chunksRootName;
+
+            Transform chunksRoot = streamer.transform.Find(rootName);
+            if (chunksRoot == null)
+                return Fail($"No '{rootName}' root — run Build Hierarchy first.");
+
+            int slotsRefreshed = 0;
+            for (int ci = 0; ci < man.chunks.Length; ci++)
+            {
+                var cm = man.chunks[ci];
+                if (cm.lods == null || cm.lods.Length == 0) continue;
+
+                if (EditorUtility.DisplayCancelableProgressBar("Refresh LOD Preview Assets",
+                        $"Chunk {cm.id + 1}/{man.chunks.Length}", (float)ci / man.chunks.Length))
+                {
+                    EditorUtility.ClearProgressBar();
+                    return Fail("Refresh cancelled.");
+                }
+
+                Transform chunkT = chunksRoot.Find($"Chunk_{cm.id}");
+                if (chunkT == null)
+                {
+                    Debug.LogWarning($"[HierarchyBuilder] Chunk_{cm.id} missing — skipped refresh.");
+                    continue;
+                }
+
+                var chunk = chunkT.GetComponent<GaussianSplatChunk>();
+                if (chunk == null) continue;
+
+                for (int L = 0; L < cm.lods.Length; L++)
+                {
+                    if (!IsLodInRefreshRange(L, opts)) continue;
+
+                    var lm = cm.lods[L];
+                    Transform lodT = chunkT.Find($"LOD{L}");
+                    if (lodT == null) continue;
+
+                    var slot = lodT.GetComponent<GaussianSplatLodSlot>();
+                    if (slot == null) continue;
+
+                    string addr = LodManifestValidator.ResolveAddr(man, lm);
+                    slot.lodLevel = L;
+                    slot.addressableKey = addr;
+                    slot.splatCount = lm.splatCount;
+
+                    if (opts.assignPreviewAssets && !string.IsNullOrEmpty(addr))
+                    {
+                        var asset = AssetDatabase.LoadAssetAtPath<GaussianSplatAsset>($"{assetFolder}/{addr}.asset");
+                        if (asset != null)
+                        {
+                            slot.previewAsset = asset;
+                            if (asset.splatCount != lm.splatCount)
+                            {
+                                Debug.LogWarning(
+                                    $"[HierarchyBuilder] chunk {cm.id} LOD{L}: asset has {asset.splatCount:N0} splats " +
+                                    $"but manifest expects {lm.splatCount:N0} — re-import {addr}.ply");
+                            }
+                        }
+                        else if (!opts.preserveExistingPreviewWhenMissing)
+                        {
+                            slot.previewAsset = null;
+                        }
+                    }
+
+                    slot.WirePreviewToRenderer();
+
+                    slotsRefreshed++;
+                    EditorUtility.SetDirty(slot);
+                }
+
+                chunk.RefreshLodSlotsFromChildren();
+                EditorUtility.SetDirty(chunk);
+            }
+
+            EditorUtility.ClearProgressBar();
+
+            int previewLod = opts.applyPreviewLodLevel >= 0
+                ? opts.applyPreviewLodLevel
+                : streamer.EditorGlobalPreviewLod;
+            SetStreamerPreviewLod(streamer, previewLod);
+            WireAllPreviewAssets(streamer);
+            ApplyGlobalPreviewToAllChunks(streamer, previewLod);
+
+            EditorUtility.SetDirty(streamer);
+
+            if (prefabContents != null && !string.IsNullOrEmpty(prefabPath))
+                PrefabUtility.SaveAsPrefabAsset(prefabContents, prefabPath);
+
+            return new BuildResult
+            {
+                success = true,
+                message = $"Refreshed {slotsRefreshed} LOD slot(s) on {man.chunks.Length} chunks (LOD preview {previewLod}).",
+                chunkCount = man.chunks.Length,
+                lodSlotsCreated = slotsRefreshed,
+            };
+        }
+
+        static bool IsLodInRefreshRange(int lodLevel, BuildOptions opts)
+        {
+            int min = opts.refreshLodMin < 0 ? 0 : opts.refreshLodMin;
+            int max = opts.refreshLodMax < 0 ? int.MaxValue : opts.refreshLodMax;
+            return lodLevel >= min && lodLevel <= max;
+        }
+
+        static void SetStreamerPreviewLod(GaussianLodStreamAsync streamer, int level)
+        {
+            var so = new SerializedObject(streamer);
+            var lodProp = so.FindProperty("editorGlobalPreviewLod");
+            if (lodProp != null)
+            {
+                lodProp.intValue = level;
+                so.ApplyModifiedPropertiesWithoutUndo();
             }
         }
 
@@ -185,16 +356,16 @@ namespace GsplatLod
                         string assetPath = $"{assetFolder}/{addr}.asset";
                         var asset = AssetDatabase.LoadAssetAtPath<GaussianSplatAsset>(assetPath);
                         slot.previewAsset = asset;
-                        if (asset != null && L == levelsToBuild - 1)
+                        if (asset != null && asset.splatCount != lm.splatCount)
                         {
-                            slot.SetActiveLod(asset, true);
-                            chunk.activeLod = L;
-                            chunk.isResident = true;
+                            Debug.LogWarning(
+                                $"[HierarchyBuilder] chunk {cm.id} LOD{L}: asset has {asset.splatCount:N0} splats " +
+                                $"but manifest expects {lm.splatCount:N0} — re-import {addr}.ply");
                         }
-                        else
-                            slot.Clear();
+                        slot.WirePreviewToRenderer();
                     }
-                    else slot.Clear();
+                    else if (!opts.assignPreviewAssets)
+                        slot.Clear();
 
                     slots.Add(slot);
                     slotsCreated++;
@@ -217,10 +388,15 @@ namespace GsplatLod
             EditorUtility.SetDirty(streamer);
             EditorUtility.SetDirty(chunksRoot.gameObject);
 
+            int previewLod = opts.applyPreviewLodLevel >= 0
+                ? opts.applyPreviewLodLevel
+                : streamer.EditorGlobalPreviewLod;
+            SetStreamerPreviewLod(streamer, previewLod);
+            WireAllPreviewAssets(streamer);
+            ApplyGlobalPreviewToAllChunks(streamer, previewLod);
+
             if (prefabContents != null && !string.IsNullOrEmpty(prefabPath))
                 PrefabUtility.SaveAsPrefabAsset(prefabContents, prefabPath);
-
-            ApplyGlobalPreviewToAllChunks(streamer, streamer.EditorGlobalPreviewLod);
 
             return new BuildResult
             {
@@ -234,12 +410,45 @@ namespace GsplatLod
         static void ApplyGlobalPreviewToAllChunks(GaussianLodStreamAsync streamer, int level)
         {
             if (streamer == null) return;
+            GaussianSplatSettings.editorPreviewBypassOctreeCulling = true;
             foreach (var chunk in streamer.GetComponentsInChildren<GaussianSplatChunk>(true))
             {
                 if (chunk == null || chunk.LodCount == 0) continue;
                 chunk.SetEditorPreviewLod(Mathf.Clamp(level, 0, chunk.LodCount - 1));
             }
+            RefreshActivePreviewRenderers(streamer);
             EditorUtility.SetDirty(streamer);
+            SceneView.RepaintAll();
+        }
+
+        static void RefreshActivePreviewRenderers(GaussianLodStreamAsync streamer)
+        {
+            if (streamer == null) return;
+            foreach (var slot in streamer.GetComponentsInChildren<GaussianSplatLodSlot>(true))
+            {
+                if (slot == null) continue;
+                slot.WirePreviewToRenderer();
+                if (!slot.gameObject.activeSelf) continue;
+                var r = slot.Renderer;
+                if (r == null || r.m_Asset == null) continue;
+                r.EditorForceReloadAsset();
+            }
+        }
+
+        /// <summary>Wires previewAsset into every slot's GaussianSplatRenderer (editor + prefab save).</summary>
+        public static int WireAllPreviewAssets(GaussianLodStreamAsync streamer)
+        {
+            if (streamer == null) return 0;
+            int n = 0;
+            foreach (var slot in streamer.GetComponentsInChildren<GaussianSplatLodSlot>(true))
+            {
+                if (slot == null || slot.previewAsset == null) continue;
+                slot.WirePreviewToRenderer();
+                EditorUtility.SetDirty(slot);
+                n++;
+            }
+            EditorUtility.SetDirty(streamer);
+            return n;
         }
 
         public static BuildResult Clear(GaussianLodStreamAsync streamer, string chunksRootName = null)

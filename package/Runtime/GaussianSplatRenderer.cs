@@ -8,6 +8,7 @@ using Unity.Mathematics;
 using Unity.Profiling;
 using Unity.Profiling.LowLevel;
 using UnityEngine;
+using GaussianSplatting.Runtime.Streaming;
 using UnityEngine.Experimental.Rendering;
 using UnityEngine.Rendering;
 using UnityEngine.XR;
@@ -35,6 +36,16 @@ namespace GaussianSplatting.Runtime
         readonly Dictionary<GaussianSplatRenderer, MaterialPropertyBlock> m_Splats = new();
         readonly HashSet<Camera> m_CameraCommandBuffersDone = new();
         readonly List<(GaussianSplatRenderer, MaterialPropertyBlock)> m_ActiveSplats = new();
+        Streaming.GaussianSplatUnifiedWorld m_UnifiedWorld;
+
+        public void SetUnifiedWorld(Streaming.GaussianSplatUnifiedWorld world) => m_UnifiedWorld = world;
+
+        public void ClearUnifiedWorld(Streaming.GaussianSplatUnifiedWorld world)
+        {
+            if (m_UnifiedWorld == world) m_UnifiedWorld = null;
+        }
+
+        public bool hasUnifiedWorld => m_UnifiedWorld != null && m_UnifiedWorld.useUnifiedDraw;
 
         CommandBuffer m_CommandBuffer;
         GraphicsBuffer m_CubeIndexBuffer;
@@ -196,8 +207,26 @@ namespace GaussianSplatting.Runtime
         {
             if (cam.cameraType == CameraType.Preview)
                 return false;
-            // gather all active & valid splat objects
             m_ActiveSplats.Clear();
+
+            // Unified world path: single renderer, single draw (PlayCanvas gsplat-world).
+            if (hasUnifiedWorld)
+            {
+                var ur = m_UnifiedWorld.renderer;
+                if (ur != null && ur.isActiveAndEnabled && ur.HasValidAsset && ur.HasValidRenderSetup)
+                {
+                    if (m_Splats.TryGetValue(ur, out var mpb))
+                        m_ActiveSplats.Add((ur, mpb));
+                    else
+                    {
+                        RegisterSplat(ur);
+                        if (m_Splats.TryGetValue(ur, out mpb))
+                            m_ActiveSplats.Add((ur, mpb));
+                    }
+                }
+                return m_ActiveSplats.Count > 0;
+            }
+
             foreach (var kvp in m_Splats)
             {
                 var gs = kvp.Key;
@@ -367,7 +396,7 @@ namespace GaussianSplatting.Runtime
                 int instanceCount = gs.splatCount;
 
                 // Perform octree culling if enabled
-                if (settings.m_EnableOctreeCulling)
+                if (settings.IsOctreeCullingActive())
                 {
                     int visibleCount = gs.PerformOctreeCulling(cam);
                     if (visibleCount > 0)
@@ -624,51 +653,97 @@ namespace GaussianSplatting.Runtime
             m_Asset != null &&
             m_Asset.splatCount > 0 &&
             m_Asset.formatVersion == GaussianSplatAsset.kCurrentVersion &&
-            m_Asset.posData != null &&
-            m_Asset.otherData != null &&
-            m_Asset.shData != null &&
-            m_Asset.colorData != null;
+            ((m_Asset.posData != null && m_Asset.otherData != null && m_Asset.shData != null && m_Asset.colorData != null)
+             || m_Asset.hasRuntimeByteData);
         public bool HasValidRenderSetup => m_GpuPosData != null && m_GpuOtherData != null && m_GpuChunks != null;
 
-        void CreateResourcesForAsset()
+        /// <summary>Bind pre-built pool GPU buffers for unified-world single-draw path.</summary>
+        public void AdoptPoolBuffers(GraphicsBuffer pos, GraphicsBuffer other, GraphicsBuffer sh, Texture color,
+            GraphicsBuffer chunks, bool chunksValid, int splatCount, GaussianSplatAsset assetRef)
         {
-            if (!HasValidAsset)
+            DisposeGpuBuffers();
+            m_GpuPosData = pos;
+            m_GpuOtherData = other;
+            m_GpuSHData = sh;
+            m_GpuColorData = color;
+            m_GpuChunks = chunks;
+            m_GpuChunksValid = chunksValid;
+            m_SplatCount = splatCount;
+            m_Asset = assetRef;
+            m_OctreeBuilt = false;
+            if (assetRef != null)
+                BuildOctreeForCulling();
+        }
+
+        void DisposeGpuBuffers()
+        {
+            // Only dispose buffers we own — pool buffers are owned by GpuBufferPool.
+            if (!m_OwnsGpuBuffers) return;
+            m_GpuPosData?.Dispose(); m_GpuPosData = null;
+            m_GpuOtherData?.Dispose(); m_GpuOtherData = null;
+            m_GpuSHData?.Dispose(); m_GpuSHData = null;
+            if (m_GpuColorData != null) DestroyImmediate(m_GpuColorData);
+            m_GpuColorData = null;
+            m_GpuChunks?.Dispose(); m_GpuChunks = null;
+        }
+
+        bool m_OwnsGpuBuffers = true;
+
+        public void SetOwnsGpuBuffers(bool owns) => m_OwnsGpuBuffers = owns;
+
+        void CreateResourcesForAsset() => CreateResourcesForAsset(false);
+
+        void CreateResourcesForAsset(bool skipOctreeRebuild)
+        {
+            if (!HasValidAsset && !HasValidRuntimeAsset)
                 return;
 
             m_SplatCount = asset.splatCount;
-            // For WebGL compatibility, use Vertex target instead of Raw
-            m_GpuPosData = new GraphicsBuffer(GraphicsBuffer.Target.Vertex, (int) (asset.posData.dataSize / 4), 4) { name = "GaussianPosData" };
-            m_GpuPosData.SetData(asset.posData.GetData<uint>());
-            m_GpuOtherData = new GraphicsBuffer(GraphicsBuffer.Target.Vertex, (int) (asset.otherData.dataSize / 4), 4) { name = "GaussianOtherData" };
-            m_GpuOtherData.SetData(asset.otherData.GetData<uint>());
-            m_GpuSHData = new GraphicsBuffer(GraphicsBuffer.Target.Vertex, (int) (asset.shData.dataSize / 4), 4) { name = "GaussianSHData" };
-            m_GpuSHData.SetData(asset.shData.GetData<uint>());
+            var posBytes = asset.GetPosBytes();
+            var otherBytes = asset.GetOtherBytes();
+            var shBytes = asset.GetSHBytes();
+            var colorBytes = asset.GetColorBytes();
+            var chunkBytes = asset.GetChunkBytes();
+
+            if (posBytes == null || otherBytes == null || shBytes == null || colorBytes == null)
+                return;
+
+            m_GpuPosData = new GraphicsBuffer(GraphicsBuffer.Target.Vertex, posBytes.Length / 4, 4) { name = "GaussianPosData" };
+            m_GpuPosData.SetData(posBytes);
+            m_GpuOtherData = new GraphicsBuffer(GraphicsBuffer.Target.Vertex, otherBytes.Length / 4, 4) { name = "GaussianOtherData" };
+            m_GpuOtherData.SetData(otherBytes);
+            m_GpuSHData = new GraphicsBuffer(GraphicsBuffer.Target.Vertex, shBytes.Length / 4, 4) { name = "GaussianSHData" };
+            m_GpuSHData.SetData(shBytes);
             var (texWidth, texHeight) = GaussianSplatAsset.CalcTextureSize(asset.splatCount);
             var texFormat = GaussianSplatAsset.ColorFormatToGraphics(asset.colorFormat);
-            // For WebGL compatibility, use simpler texture creation flags
             var tex = new Texture2D(texWidth, texHeight, texFormat, TextureCreationFlags.None) { name = "GaussianColorData" };
-            tex.SetPixelData(asset.colorData.GetData<byte>(), 0);
+            tex.SetPixelData(colorBytes, 0);
             tex.Apply(false, true);
             m_GpuColorData = tex;
-            if (asset.chunkData != null && asset.chunkData.dataSize != 0)
+            if (chunkBytes != null && chunkBytes.Length != 0)
             {
-                m_GpuChunks = new GraphicsBuffer(GraphicsBuffer.Target.Vertex,
-                    (int) (asset.chunkData.dataSize / UnsafeUtility.SizeOf<GaussianSplatAsset.ChunkInfo>()),
+                int chunkCount = chunkBytes.Length / UnsafeUtility.SizeOf<GaussianSplatAsset.ChunkInfo>();
+                m_GpuChunks = new GraphicsBuffer(GraphicsBuffer.Target.Vertex, chunkCount,
                     UnsafeUtility.SizeOf<GaussianSplatAsset.ChunkInfo>()) {name = "GaussianChunkData"};
-                m_GpuChunks.SetData(asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>());
+                m_GpuChunks.SetData(chunkBytes);
                 m_GpuChunksValid = true;
             }
             else
             {
-                // just a dummy chunk buffer
                 m_GpuChunks = new GraphicsBuffer(GraphicsBuffer.Target.Vertex, 1,
                     UnsafeUtility.SizeOf<GaussianSplatAsset.ChunkInfo>()) {name = "GaussianChunkData"};
                 m_GpuChunksValid = false;
             }
 
-            // Build octree for culling if enabled
-            BuildOctreeForCulling();
+            if (!skipOctreeRebuild)
+                BuildOctreeForCulling();
         }
+
+        bool HasValidRuntimeAsset =>
+            m_Asset != null &&
+            m_Asset.splatCount > 0 &&
+            m_Asset.formatVersion == GaussianSplatAsset.kCurrentVersion &&
+            m_Asset.hasRuntimeByteData;
 
         bool resourcesAreSetUp => GaussianSplatSettings.instance.resourcesFound;
 
@@ -681,6 +756,18 @@ namespace GaussianSplatting.Runtime
             }
         }
 
+        public void ReloadAssetFromRuntime() => ReloadAssetFromRuntime(false);
+
+        public void ReloadAssetFromRuntime(bool skipOctreeRebuild)
+        {
+            if (!resourcesAreSetUp) return;
+            DisposeResourcesForAsset();
+            CreateResourcesForAsset(skipOctreeRebuild);
+            UpdateAssetDataInRenderSystem();
+            m_PrevAsset = m_Asset;
+            m_PrevHash = m_Asset ? m_Asset.dataHash : default;
+        }
+
         public void OnEnable()
         {
             m_FrameCounter = 0;
@@ -691,6 +778,8 @@ namespace GaussianSplatting.Runtime
             CreateResourcesForAsset();
             // Update the MaterialPropertyBlock with asset data after creating resources
             UpdateAssetDataInRenderSystem();
+            m_PrevAsset = m_Asset;
+            m_PrevHash = m_Asset ? m_Asset.dataHash : default;
         }
 
 
@@ -712,7 +801,7 @@ namespace GaussianSplatting.Runtime
 
             // Set octree culling properties
             var settings = GaussianSplatSettings.instance;
-            bool useOctreeCulling = settings.m_EnableOctreeCulling && m_OctreeBuilt && m_Octree != null;
+            bool useOctreeCulling = settings.IsOctreeCullingActive() && m_OctreeBuilt && m_Octree != null;
             mat.SetInteger(Props.UseIndexMapping, useOctreeCulling ? 1 : 0);
             
             // Always bind an index buffer for WebGPU compatibility
@@ -751,14 +840,24 @@ namespace GaussianSplatting.Runtime
 
         void DisposeResourcesForAsset()
         {
-            DestroyImmediate(m_GpuColorData);
+            if (m_OwnsGpuBuffers)
+            {
+                if (m_GpuColorData != null) DestroyImmediate(m_GpuColorData);
+                m_GpuColorData = null;
+                DisposeBuffer(ref m_GpuPosData);
+                DisposeBuffer(ref m_GpuOtherData);
+                DisposeBuffer(ref m_GpuSHData);
+                DisposeBuffer(ref m_GpuChunks);
+            }
+            else
+            {
+                m_GpuPosData = null;
+                m_GpuOtherData = null;
+                m_GpuSHData = null;
+                m_GpuColorData = null;
+                m_GpuChunks = null;
+            }
 
-            DisposeBuffer(ref m_GpuPosData);
-            DisposeBuffer(ref m_GpuOtherData);
-            DisposeBuffer(ref m_GpuSHData);
-            DisposeBuffer(ref m_GpuChunks);
-
-            // Dispose octree
             m_Octree?.Dispose();
             m_Octree = null;
             m_OctreeBuilt = false;
@@ -795,6 +894,24 @@ namespace GaussianSplatting.Runtime
                 }
             }
         }
+
+#if UNITY_EDITOR
+        /// <summary>Editor preview: rebuild GPU buffers after re-import or LOD slot swap.</summary>
+        public void EditorForceReloadAsset()
+        {
+            if (Application.isPlaying) return;
+            m_PrevAsset = null;
+            m_PrevHash = default;
+            DisposeResourcesForAsset();
+            if (m_Asset == null || !resourcesAreSetUp) return;
+            if (!enabled || !gameObject.activeInHierarchy) return;
+            CreateResourcesForAsset();
+            EnsureSorterAndRegister();
+            UpdateAssetDataInRenderSystem();
+            UnityEditor.EditorUtility.SetDirty(this);
+            UnityEditor.SceneView.RepaintAll();
+        }
+#endif
 
         void UpdateAssetDataInRenderSystem()
         {
@@ -847,7 +964,7 @@ namespace GaussianSplatting.Runtime
                 return m_SplatCount; // No culling, render all splats
             
             var settings = GaussianSplatSettings.instance;
-            if (!settings.m_EnableOctreeCulling)
+            if (!settings.IsOctreeCullingActive())
                 return m_SplatCount;
                 
             // Check if we need to update culling (every N frames)
@@ -858,6 +975,10 @@ namespace GaussianSplatting.Runtime
             }
             
             m_LastCullingFrame = currentFrame;
+
+            var unifiedWorld = GaussianSplatUnifiedWorld.active;
+            m_Octree.useGlobalGpuSort = unifiedWorld != null && unifiedWorld.useUnifiedDraw
+                                        && ReferenceEquals(unifiedWorld.renderer, this);
             
             // For alpha blend mode, use hierarchical sorting which does culling + sorting in one pass
             if (settings.m_Transparency == TransparencyMode.AlphaBlend)
@@ -879,7 +1000,7 @@ namespace GaussianSplatting.Runtime
         void BuildOctreeForCulling()
         {
             var settings = GaussianSplatSettings.instance;
-            if (!settings.m_EnableOctreeCulling)
+            if (!settings.IsOctreeCullingActive())
             {
                 m_OctreeBuilt = false;
                 return;
@@ -915,6 +1036,9 @@ namespace GaussianSplatting.Runtime
 
                     // Initialize and build octree using world-space positions
                     m_Octree ??= new GaussianSplatOctree();
+                    var unifiedWorld = Streaming.GaussianSplatUnifiedWorld.active;
+                    m_Octree.useGlobalGpuSort = unifiedWorld != null && unifiedWorld.useUnifiedDraw
+                                                && ReferenceEquals(unifiedWorld.renderer, this);
                     m_Octree.Initialize(settings.m_OctreeMaxDepth, settings.m_OctreeMaxSplatsPerLeaf);
                     m_Octree.Build(worldSplatPositions, bounds, settings.m_OctreeSplatRatio);
                 }
@@ -943,40 +1067,83 @@ namespace GaussianSplatting.Runtime
             if (!HasValidAsset)
                 return new NativeArray<float3>();
 
-            // Add validation
             if (m_SplatCount <= 0)
             {
                 Debug.LogError($"Invalid splat count: {m_SplatCount}");
                 return new NativeArray<float3>();
             }
 
+            var posBytes = asset.GetPosBytes();
+            if (posBytes == null || posBytes.Length == 0)
+            {
+                Debug.LogError($"No position data for {name}");
+                return new NativeArray<float3>();
+            }
+
+            NativeArray<byte> posByteBacking = default;
+            NativeArray<uint> posData;
+            if (asset.posData != null)
+            {
+                posData = asset.posData.GetData<uint>();
+            }
+            else
+            {
+                posByteBacking = new NativeArray<byte>(posBytes.Length, Allocator.Temp);
+                posByteBacking.CopyFrom(posBytes);
+                posData = posByteBacking.Reinterpret<uint>(1);
+            }
+
+            NativeArray<byte> chunkByteBacking = default;
+            NativeArray<GaussianSplatAsset.ChunkInfo>? chunkData = null;
+            var chunkBytes = asset.GetChunkBytes();
+            if (asset.chunkData != null)
+            {
+                chunkData = asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>();
+            }
+            else if (chunkBytes != null && chunkBytes.Length > 0)
+            {
+                int elemSize = UnsafeUtility.SizeOf<GaussianSplatAsset.ChunkInfo>();
+                if (chunkBytes.Length % elemSize != 0)
+                {
+                    Debug.LogError($"Chunk table size mismatch for {name}: {chunkBytes.Length} bytes, elemSize={elemSize}");
+                    return new NativeArray<float3>();
+                }
+                chunkByteBacking = new NativeArray<byte>(chunkBytes.Length, Allocator.Temp);
+                chunkByteBacking.CopyFrom(chunkBytes);
+                // Reinterpret param = source element size (byte = 1), not target struct size.
+                chunkData = chunkByteBacking.Reinterpret<GaussianSplatAsset.ChunkInfo>(1);
+            }
+
             var positions = new NativeArray<float3>(m_SplatCount, Allocator.Temp);
-            var posData = asset.posData.GetData<uint>();
-            var chunkData = asset.chunkData?.GetData<GaussianSplatAsset.ChunkInfo>();
-            
             int vectorSize = GaussianSplatAsset.GetVectorSize(asset.posFormat);
-            
-            // Calculate expected data size and validate
+
             long expectedDataSize = (long)m_SplatCount * vectorSize;
-            long actualDataSize = posData.Length * 4; // posData is uint[], so 4 bytes per element
-            
+            long actualDataSize = posData.Length * 4;
             if (expectedDataSize > actualDataSize)
             {
                 Debug.LogError($"Position data size mismatch: expected {expectedDataSize} bytes, got {actualDataSize} bytes. " +
-                             $"SplatCount={m_SplatCount}, VectorSize={vectorSize}, Format={asset.posFormat}");
+                               $"SplatCount={m_SplatCount}, VectorSize={vectorSize}, Format={asset.posFormat}");
                 positions.Dispose();
+                if (posByteBacking.IsCreated) posByteBacking.Dispose();
+                if (chunkByteBacking.IsCreated) chunkByteBacking.Dispose();
                 return new NativeArray<float3>();
             }
-            
+
             if (GaussianSplatSettings.instance.m_VerboseLog)
                 Debug.Log($"Extracting {m_SplatCount} splat positions. Format: {asset.posFormat}, VectorSize: {vectorSize}, " +
-                         $"PosData length: {posData.Length} uints ({posData.Length * 4} bytes)");
-            
-            for (int i = 0; i < m_SplatCount; i++)
+                          $"PosData length: {posData.Length} uints ({posData.Length * 4} bytes)");
+
+            try
             {
-                positions[i] = DecodeSplatPosition(posData, chunkData, i, asset.posFormat, vectorSize);
+                for (int i = 0; i < m_SplatCount; i++)
+                    positions[i] = DecodeSplatPosition(posData, chunkData, i, asset.posFormat, vectorSize);
             }
-            
+            finally
+            {
+                if (posByteBacking.IsCreated) posByteBacking.Dispose();
+                if (chunkByteBacking.IsCreated) chunkByteBacking.Dispose();
+            }
+
             return positions;
         }
 

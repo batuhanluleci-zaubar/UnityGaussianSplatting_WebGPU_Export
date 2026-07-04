@@ -60,6 +60,9 @@ namespace GaussianSplatting.Runtime.StreamedSog
         /// <summary>Absolute filesystem paths for each entry in Meta.Filenames — resolved once at load.</summary>
         public string[] ChunkDirectories;
 
+        /// <summary>Shortcut for <see cref="SogLodMeta.PlayCanvasCoords"/>.</summary>
+        public bool PlayCanvasCoords => Meta != null && Meta.PlayCanvasCoords;
+
         public void Dispose()
         {
             if (Leaves.IsCreated) Leaves.Dispose();
@@ -140,7 +143,7 @@ namespace GaussianSplatting.Runtime.StreamedSog
                 chunkDirs = new string[meta.Filenames.Length];
                 for (int i = 0; i < meta.Filenames.Length; i++)
                 {
-                    string fn = meta.Filenames[i] ?? string.Empty;
+                    string fn = SogLodMeta.NormalizeChunkDir(meta.Filenames[i] ?? string.Empty);
                     chunkDirs[i] = Path.IsPathRooted(fn) ? fn : Path.Combine(rootDir, fn);
                 }
             }
@@ -227,7 +230,7 @@ namespace GaussianSplatting.Runtime.StreamedSog
 
             try
             {
-                DecodeSlice(resource, offset, count, output);
+                DecodeSlice(resource, offset, count, output, manifest.PlayCanvasCoords);
             }
             catch
             {
@@ -263,7 +266,7 @@ namespace GaussianSplatting.Runtime.StreamedSog
         /// </summary>
         public static void DecodeChunkSliceForStreamer(
             SogChunkResource resource, int offset, int count,
-            NativeArray<InputSplatData> output)
+            NativeArray<InputSplatData> output, bool playCanvasToUnity = false)
         {
             if (resource == null)
                 throw new ArgumentNullException(nameof(resource));
@@ -275,7 +278,7 @@ namespace GaussianSplatting.Runtime.StreamedSog
                     $"SogReader.DecodeChunkSliceForStreamer: output NativeArray must be created with length >= {count} (has {output.Length}).",
                     nameof(output));
 
-            DecodeSlice(resource, offset, count, output);
+            DecodeSlice(resource, offset, count, output, playCanvasToUnity);
         }
 
         /// <summary>
@@ -285,7 +288,7 @@ namespace GaussianSplatting.Runtime.StreamedSog
         /// The <paramref name="offset"/> is the splat index INSIDE the chunk.
         /// </summary>
         static void DecodeSlice(SogChunkResource resource, int offset, int count,
-            NativeArray<InputSplatData> output)
+            NativeArray<InputSplatData> output, bool playCanvasToUnity)
         {
             if (resource.Meta == null)
                 throw new InvalidOperationException("SogReader.DecodeSlice: resource.Meta is null");
@@ -317,6 +320,7 @@ namespace GaussianSplatting.Runtime.StreamedSog
                 strideBytes = resource.MeansStrideBytes,
                 splatOffset = 0,
                 output = output,
+                playCanvasToUnity = playCanvasToUnity,
             }.Schedule(count, 512, prev);
 
             // Quats ------------------------------------------------------------
@@ -329,16 +333,14 @@ namespace GaussianSplatting.Runtime.StreamedSog
                     quats = quats,
                     splatOffset = 0,
                     output = output,
+                    playCanvasToUnity = playCanvasToUnity,
                 }.Schedule(count, 512, prev);
             }
 
             // Scales -----------------------------------------------------------
             if (resource.Scales.IsCreated && resource.ScalesCodebook.IsCreated)
             {
-                // Scales layout is 3 bytes per splat (x,y,z) — stride is fixed
-                // at 3 regardless of ScalesStrideBytes (RGBA vs RGB pack was
-                // already dealt with by the loader on the codebook side).
-                int scaleStride = 3;
+                int scaleStride = resource.ScalesStrideBytes > 0 ? resource.ScalesStrideBytes : 4;
                 var scales = SliceBytes(resource.Scales, offset * scaleStride, count * scaleStride);
                 prev = new DecodeScalesJob
                 {
@@ -346,6 +348,7 @@ namespace GaussianSplatting.Runtime.StreamedSog
                     codebook = resource.ScalesCodebook,
                     output   = output,
                     splatOffset = 0,
+                    strideBytes = scaleStride,
                 }.Schedule(count, 512, prev);
             }
 
@@ -360,7 +363,9 @@ namespace GaussianSplatting.Runtime.StreamedSog
                     codebook = resource.Sh0Codebook,
                     output   = output,
                     splatOffset = 0,
-                    storeAsLogit = true,
+                    // gsplat_lod baker stores sigmoid 0..1 in the alpha byte (SPZ parity);
+                    // RuntimeSplatAssetBuilder.CalcChunkDataJob expects sigmoid before SquareCentered01.
+                    storeAsLogit = false,
                 }.Schedule(count, 512, prev);
             }
 

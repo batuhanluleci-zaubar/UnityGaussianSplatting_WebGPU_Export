@@ -149,6 +149,7 @@ namespace GaussianSplatting.Runtime
         // Platform detection and state
         private static bool s_IsSupportedPlatform = false;
         private static bool s_IsInitialized = false;
+        private static bool s_MissingDllLogged;
 
         static NativeSorting()
         {
@@ -176,13 +177,22 @@ namespace GaussianSplatting.Runtime
                 string platformName = GetPlatformName();
                 Debug.Log($"NativeSorting: Initialized with {workerThreads} worker threads on {platformName} platform");
             }
-            catch (DllNotFoundException dllEx)
+            catch (DllNotFoundException)
             {
-                string platformName = GetPlatformName();
-                Debug.LogWarning($"NativeSorting: Native library not found on {platformName} platform. " +
-                               $"Expected library: {GetExpectedLibraryName()}. " +
-                               $"Falling back to Unity Task system. " +
-                               $"To enable native threading, build and place the native library in Assets/Plugins/");
+                // macOS/Linux/Windows desktop: NativeSorting.dylib/so is optional — Task fallback is fine.
+                // WebGL: native lib is required for threading; warn once.
+                if (!s_MissingDllLogged)
+                {
+                    s_MissingDllLogged = true;
+                    if (Application.platform == RuntimePlatform.WebGLPlayer)
+                    {
+                        string platformName = GetPlatformName();
+                        Debug.LogWarning($"NativeSorting: Native library not found on {platformName} platform. " +
+                                         $"Expected library: {GetExpectedLibraryName()}. " +
+                                         "Falling back to Unity Task system. " +
+                                         "To enable native threading, build and place the native library in Assets/Plugins/");
+                    }
+                }
             }
             catch (EntryPointNotFoundException entryEx)
             {

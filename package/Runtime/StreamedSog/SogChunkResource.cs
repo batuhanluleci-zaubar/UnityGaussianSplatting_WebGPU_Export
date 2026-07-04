@@ -22,7 +22,7 @@
 //   quats     — smallest-three + 2-bit mode, RGBA8 (4 channels used)
 //   sh0       — DC term, 4 channels (r,g,b,alpha)
 //   shN_labels    — 2 bytes per splat (label lo/hi)  — optional
-//   shN_centroids — 1 byte per pixel (R channel only) — optional
+//   shN_centroids — RGB triplet per atlas pixel (3 bytes after load) — optional
 //
 // Widths/heights per attribute mirror what the WebP decoder reported so the
 // Burst jobs can index (rowStride = width * strideBytes) without re-parsing.

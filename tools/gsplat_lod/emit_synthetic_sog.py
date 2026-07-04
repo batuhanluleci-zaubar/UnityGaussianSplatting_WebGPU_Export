@@ -129,7 +129,8 @@ def encode_scales_pixels(n: int) -> list[tuple[int, int, int, int]]:
     # index 200 -> log-scale ~ log(0.01) + (log(0.05)-log(0.01))*(200/255)
     # exp(...) -> ~ 0.038 which is a visible splat radius in the [-1,1] cube.
     idx = 200
-    return [(idx, idx, idx, 0) for _ in range(n)]
+    # Alpha 255 — Pillow lossless WebP corrupts RGB when A=0.
+    return [(idx, idx, idx, 255) for _ in range(n)]
 
 
 def encode_quats_pixels(n: int) -> list[tuple[int, int, int, int]]:

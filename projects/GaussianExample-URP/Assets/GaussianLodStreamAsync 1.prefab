@@ -1,0 +1,94 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &5359473558722476302
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 7899020091476207789}
+  - component: {fileID: 7878263580121643601}
+  - component: {fileID: 2787605747258842448}
+  m_Layer: 0
+  m_Name: GaussianLodStreamAsync 1
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &7899020091476207789
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5359473558722476302}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 1
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &7878263580121643601
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5359473558722476302}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5953e029d518647278f3ae238a881433, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GsplatLod.GaussianLodStreamAsync
+  manifestPath: gsplat_lod/festsaal_200k_sog/lod-meta.json
+  format: 2
+  resolvedFormat: 0
+  cam: {fileID: 0}
+  enableEnv: 0
+  maxResidentChunks: 128
+  maxConcurrentLoads: 8
+  maxSwapsPerFrame: 32
+  cooldownEvals: 4
+  coarseFirst: 1
+  slowMotionDemo: 0
+  resetKeyEnabled: 1
+  deviceBudget: 2000000
+  useUnifiedRenderer: 1
+  lodBaseDistance: 0
+  lodMultiplier: 3
+  lodBehindPenalty: 5
+  lod0CoverageScale: 1
+  evalEveryNFrames: 10
+  lodUpdateDistance: 1
+  lodUnderfillLimit: 3
+  stagedPrefetch: 1
+  cooldownFrames: 100
+  veryNearFraction: 0.4
+  fullQualityToggleKey: 102
+  forceMaxQuality: 0
+  forceQualityConcurrentLoads: 32
+  chunksRoot: {fileID: 0}
+  preferPrebuiltHierarchy: 1
+  editorGlobalPreviewLod: 4
+  autoFrameCamera: 1
+  showHud: 1
+--- !u!114 &2787605747258842448
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5359473558722476302}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9666b36191e0744958d274fdae04f513, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GsplatLod.RendererMarkerRecorder
+  logIntervalSeconds: 2
+  alsoWriteCsv: 1
+  resetKey: 116

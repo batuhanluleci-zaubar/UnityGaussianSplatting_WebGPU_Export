@@ -34,12 +34,39 @@ namespace GsplatLod
             }
         }
 
+        public void WirePreviewToRenderer()
+        {
+            var r = Renderer;
+            if (r == null || previewAsset == null) return;
+            if (r.m_Asset == previewAsset) return;
+            r.m_Asset = previewAsset;
+#if UNITY_EDITOR
+            if (!Application.isPlaying)
+                UnityEditor.EditorUtility.SetDirty(r);
+#endif
+        }
+
         public void SetActiveLod(GaussianSplatAsset asset, bool active)
         {
             var r = Renderer;
             if (r == null) return;
-            r.m_Asset = active ? asset : null;
-            gameObject.SetActive(active && asset != null);
+
+            if (active && asset != null)
+            {
+                r.m_Asset = asset;
+                gameObject.SetActive(true);
+#if UNITY_EDITOR
+                if (!Application.isPlaying)
+                    r.EditorForceReloadAsset();
+#endif
+            }
+            else
+            {
+                gameObject.SetActive(false);
+                // Runtime: drop GPU asset on inactive slots. Editor: keep m_Asset wired for Inspector.
+                if (Application.isPlaying)
+                    r.m_Asset = null;
+            }
         }
 
         public void Clear()

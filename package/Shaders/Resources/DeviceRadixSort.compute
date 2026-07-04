@@ -2,7 +2,7 @@
 // Wrapper .compute for the DeviceRadixSort HLSL restored from git history.
 // The C# host lives in package/Runtime/GpuSorting.cs (ported from b0nes164/GPUSorting).
 // This wrapper simply declares the four kernels and the multi_compile keywords the host
-// enables (KEY_UINT, PAYLOAD_UINT, SHOULD_ASCEND, SORT_PAIRS, VULKAN) and pulls in the
+// enables (KEY_UINT, PAYLOAD_UINT, SHOULD_ASCEND, SORT_PAIRS). VULKAN is a compile-time #define.
 // algorithm HLSL. See GpuSorting.cs for the dispatch order (Init -> Upsweep -> Scan ->
 // Downsweep, repeated for 4 passes covering 32 bits at 8 bits/pass).
 // Wave intrinsics (WaveActiveBallot, WaveGetLaneIndex) require Shader Model 6.0+.
@@ -11,6 +11,8 @@
 // which cannot translate wave intrinsics -> compile error on Metal / WebGPU / GLES.
 #pragma use_dxc
 #pragma target 6.0
+// Without wave* requires Unity targets pre-Metal-2.0 MSL and SPIRV-Cross errors on subgroup builtins.
+#pragma require wavebasic waveballot wavemath waveshuffle
 
 // Exclude renderers that do not support Shader Model 6 compute (WebGPU currently, GLES).
 // Metal (macOS/iOS), Vulkan (Android XR), Direct3D 12 all support wave intrinsics via DXC.

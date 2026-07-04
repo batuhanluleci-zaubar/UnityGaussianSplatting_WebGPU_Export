@@ -27,7 +27,6 @@ namespace GaussianSplatting.Runtime
         private LocalKeyword m_payloadUintKeyword;
         private LocalKeyword m_ascendKeyword;
         private LocalKeyword m_sortPairKeyword;
-        private LocalKeyword m_vulkanKeyword;
 
         public struct Args
         {
@@ -116,17 +115,13 @@ namespace GaussianSplatting.Runtime
             m_payloadUintKeyword = new LocalKeyword(cs, "PAYLOAD_UINT");
             m_ascendKeyword = new LocalKeyword(cs, "SHOULD_ASCEND");
             m_sortPairKeyword = new LocalKeyword(cs, "SORT_PAIRS");
-            m_vulkanKeyword = new LocalKeyword(cs, "VULKAN");
 
             cs.EnableKeyword(m_keyUintKeyword);
             cs.EnableKeyword(m_payloadUintKeyword);
             cs.EnableKeyword(m_ascendKeyword);
             cs.EnableKeyword(m_sortPairKeyword);
-            // Force the VULKAN keyword ALWAYS on. In SortCommon.hlsl the VULKAN branch uses a
-            // countbits(WaveActiveBallot(true)) fallback for getWaveSize(); the non-VULKAN branch
-            // uses WaveGetLaneCount() which is not portable to Metal, WebGPU, or older SPIRV. The
-            // fallback costs a single uint4 dot and works everywhere that supports wave intrinsics.
-            cs.EnableKeyword(m_vulkanKeyword);
+            // VULKAN is a compile-time #define in DeviceRadixSort.compute (portable getWaveSize path),
+            // not a multi_compile keyword — do not EnableKeyword it from C#.
         }
 
         static uint DivRoundUp(uint x, uint y) => (x + y - 1) / y;

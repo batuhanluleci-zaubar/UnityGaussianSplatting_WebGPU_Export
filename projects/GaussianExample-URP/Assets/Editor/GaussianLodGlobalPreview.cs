@@ -29,6 +29,8 @@ namespace GsplatLod.Editor
 
             PrepareFullScenePreview(streamer);
 
+            GaussianSplatting.Runtime.GaussianSplatSettings.editorPreviewBypassOctreeCulling = true;
+
             int maxLod = GetMaxLodLevel(streamer);
             level = Mathf.Clamp(level, 0, maxLod);
 
@@ -81,13 +83,6 @@ namespace GsplatLod.Editor
                     chunk.gameObject.SetActive(true);
                 }
             }
-
-            var settings = streamer.GetComponent<GaussianSplatting.Runtime.GaussianSplatSettings>();
-            if (settings != null && settings.m_EnableOctreeCulling)
-            {
-                Undo.RecordObject(settings, "Global LOD Preview");
-                settings.m_EnableOctreeCulling = false;
-            }
         }
 
         public struct ApplyResult
@@ -118,7 +113,8 @@ namespace GsplatLod.Editor
             EditorGUILayout.LabelField("Global LOD Preview (all chunks)", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
                 "Chunk transforms must stay at (0,0,0) — splat assets use absolute scene coordinates. " +
-                "This preview shows all chunks and temporarily disables octree culling for a full-scene composite.",
+                "This preview shows all chunks and bypasses octree culling for a full-scene composite " +
+                "(your GaussianSplatSettings values are not modified).",
                 MessageType.Info);
 
             float t = maxLod > 0 ? (float)current / maxLod : 0f;

@@ -140,6 +140,36 @@ namespace GsplatLod
     // if the recorded path is missing and returns the first live one, with a clear log.
     public static class LodManifestResolver
     {
+        /// <summary>
+        /// Walk up from Assets/ to find the git monorepo root (contains tools/gsplat_lod).
+        /// Unity project lives at &lt;repo&gt;/projects/GaussianExample-URP/.
+        /// </summary>
+        public static string TryGetMonorepoRoot()
+        {
+            var dir = new DirectoryInfo(Application.dataPath);
+            while (dir != null)
+            {
+                if (Directory.Exists(Path.Combine(dir.FullName, "tools", "gsplat_lod")))
+                    return dir.FullName;
+                dir = dir.Parent;
+            }
+            return Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", ".."));
+        }
+
+        public static string ResolveRepoRelativePath(string relativePath)
+        {
+            if (string.IsNullOrEmpty(relativePath))
+                return null;
+
+            if (Path.IsPathRooted(relativePath) && File.Exists(relativePath))
+                return relativePath;
+
+            string rel = relativePath.Replace('\\', '/').TrimStart('/');
+            string root = TryGetMonorepoRoot();
+            string candidate = Path.GetFullPath(Path.Combine(root, rel));
+            return File.Exists(candidate) ? candidate : null;
+        }
+
         public static string Resolve(string savedPath, string logTag)
         {
             // A1: FIRST try StreamingAssets — this is the only path that works in a Standalone build.
@@ -155,6 +185,15 @@ namespace GsplatLod
                 }
             }
             if (!string.IsNullOrEmpty(savedPath) && File.Exists(savedPath)) return savedPath;
+
+            // Editor/dev: repo-relative path (tools/gsplat_lod/out/uhq/manifest.json)
+            var repoPath = ResolveRepoRelativePath(savedPath);
+            if (!string.IsNullOrEmpty(repoPath))
+            {
+                Debug.Log($"{logTag} manifest resolved via monorepo root: '{repoPath}'");
+                return repoPath;
+            }
+
             string outDir = null;
             if (!string.IsNullOrEmpty(savedPath))
             {

@@ -55,6 +55,24 @@ namespace GaussianSplatting.Runtime
         }
         static GaussianSplatSettings ms_Instance;
 
+#if UNITY_EDITOR
+        /// <summary>
+        /// Editor global LOD preview: skip octree culling without mutating m_EnableOctreeCulling on scene objects.
+        /// </summary>
+        public static bool editorPreviewBypassOctreeCulling;
+#endif
+
+        internal bool IsOctreeCullingActive()
+        {
+            if (!m_EnableOctreeCulling)
+                return false;
+#if UNITY_EDITOR
+            if (!Application.isPlaying && editorPreviewBypassOctreeCulling)
+                return false;
+#endif
+            return true;
+        }
+
         [Tooltip("Gaussian splat transparency rendering algorithm")]
         public TransparencyMode m_Transparency = TransparencyMode.AlphaBlend;
 
@@ -79,6 +97,9 @@ namespace GaussianSplatting.Runtime
         [Range(1, 65536)] public int m_OctreeMaxSplatsPerLeaf = 1;
         [Tooltip("Update culling every N frames (1 = every frame, higher = better performance but less precise)")]
         [Range(1, 20)] public int m_OctreeCullingUpdateInterval = 1;
+        [Tooltip("Keep octree sort but skip frustum rejection — draw every splat in the merged pool. " +
+                 "Use for budget-bounded SOG streaming where resident count already matches device budget.")]
+        public bool m_OctreeSkipFrustumCull = false;
 
         [Tooltip("Ratio (0-1) of splats considered as 'screen' splats when building the octree. The remainder are treated as background splats(Always draw last in front-to-back alpha blend mode).")]
         [Range(0.0f, 1.0f)] public float m_OctreeSplatRatio = 0.9f;
@@ -152,13 +173,50 @@ namespace GaussianSplatting.Runtime
         // P1 SuperSplat parity: DEVICE_RADIX_SORT compute shader for the GPU sort path.
         // Loaded only if the platform supports compute; otherwise the CPU sort path stays live.
         internal ComputeShader csDeviceRadixSort { get; private set; }
-        // Whether GPU sort is actually usable (compute supported + shader loaded + kernels found)
-        internal bool gpuSortAvailable => m_UseGpuSort && csDeviceRadixSort != null && SystemInfo.supportsComputeShaders;
+        bool m_GpuSortProbeDone;
+        bool m_GpuSortPlatformOk;
+
+        // Compute supported + shader loaded + kernels compile and run on this GPU.
+        internal bool gpuSortAvailable
+        {
+            get
+            {
+                if (!m_UseGpuSort || csDeviceRadixSort == null || !SystemInfo.supportsComputeShaders)
+                    return false;
+                if (!m_GpuSortProbeDone)
+                {
+                    m_GpuSortProbeDone = true;
+                    m_GpuSortPlatformOk = ProbeGpuSortKernels(csDeviceRadixSort);
+                    if (!m_GpuSortPlatformOk && m_UseGpuSort)
+                        Debug.Log("[GaussianSplatSettings] DeviceRadixSort unavailable on this GPU — global/per-node sort uses CPU fallback.");
+                }
+                return m_GpuSortPlatformOk;
+            }
+        }
+
+        static bool ProbeGpuSortKernels(ComputeShader cs)
+        {
+            try
+            {
+                var sorter = new GpuSorting(cs);
+                return sorter.Valid;
+            }
+            catch
+            {
+                return false;
+            }
+        }
 
         void Awake()
         {
             if (ms_Instance != null && ms_Instance != this)
-                DestroyImmediate(ms_Instance.gameObject);
+            {
+                if (ms_Instance.gameObject.hideFlags == HideFlags.HideAndDontSave)
+                    DestroyImmediate(ms_Instance.gameObject);
+                else if (Application.isPlaying)
+                    DestroyImmediate(ms_Instance);
+                // Edit mode: keep all scene/prefab settings components; last Awake wins for instance pointer.
+            }
             ms_Instance = this;
             EnsureResources();
         }

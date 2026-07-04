@@ -42,6 +42,12 @@ namespace GaussianSplatting.Runtime.StreamedSog
         public SogNode Tree;
 
         /// <summary>
+        /// True when baked by splat-transform (PlayCanvas RDF coords). Positions and tree
+        /// bounds need Y/Z negation to match Unity SPZ import space.
+        /// </summary>
+        public bool PlayCanvasCoords;
+
+        /// <summary>
         /// Parses a lod-meta.json v1 payload. Throws <see cref="FormatException"/> with
         /// a specific message on any schema mismatch.
         /// </summary>
@@ -106,8 +112,58 @@ namespace GaussianSplatting.Runtime.StreamedSog
                 throw new FormatException("SogLodMeta.Parse: missing required 'tree' node");
             meta.Tree = ParseNode(treeTok, "tree");
 
+            NormalizePlayCanvasCompat(meta, root);
+
             return meta;
         }
+
+        /// <summary>
+        /// splat-transform emits world-space tree bounds and filenames like
+        /// <c>0_0/meta.json</c>; sog_baker uses log-space bounds and directory names.
+        /// Normalize once at parse so downstream InvLogTransform stays uniform.
+        /// </summary>
+        static void NormalizePlayCanvasCompat(SogLodMeta meta, JObject root)
+        {
+            for (int i = 0; i < meta.Filenames.Length; i++)
+                meta.Filenames[i] = NormalizeChunkDir(meta.Filenames[i]);
+
+            string generator = (string)(root["asset"]?["generator"]);
+            bool splatTransform = generator != null &&
+                generator.IndexOf("splat-transform", StringComparison.OrdinalIgnoreCase) >= 0;
+            meta.PlayCanvasCoords = splatTransform;
+            if (splatTransform && meta.Tree != null)
+                ConvertTreeBoundsToLogSpace(meta.Tree, playCanvasToUnity: true);
+        }
+
+        internal static string NormalizeChunkDir(string entry)
+        {
+            if (string.IsNullOrEmpty(entry)) return entry;
+            const string suffix = "/meta.json";
+            if (entry.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                return entry.Substring(0, entry.Length - suffix.Length);
+            if (entry.EndsWith("\\meta.json", StringComparison.OrdinalIgnoreCase))
+                return entry.Substring(0, entry.Length - "\\meta.json".Length);
+            return entry;
+        }
+
+        static void ConvertTreeBoundsToLogSpace(SogNode node, bool playCanvasToUnity)
+        {
+            if (playCanvasToUnity)
+                SogCodebooks.PlayCanvasToUnityBounds(ref node.BoundMin, ref node.BoundMax);
+            node.BoundMin = LogVec3(node.BoundMin);
+            node.BoundMax = LogVec3(node.BoundMax);
+            if (node.Children != null)
+            {
+                ConvertTreeBoundsToLogSpace(node.Children[0], playCanvasToUnity);
+                ConvertTreeBoundsToLogSpace(node.Children[1], playCanvasToUnity);
+            }
+        }
+
+        static Vector3 LogVec3(Vector3 v) =>
+            new Vector3(
+                SogCodebooks.LogTransform(v.x),
+                SogCodebooks.LogTransform(v.y),
+                SogCodebooks.LogTransform(v.z));
 
         static SogNode ParseNode(JObject nodeTok, string path)
         {

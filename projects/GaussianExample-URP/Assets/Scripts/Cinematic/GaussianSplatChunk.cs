@@ -116,8 +116,15 @@ namespace GsplatLod
             {
                 var slot = lodSlots[i];
                 if (slot == null) continue;
+                slot.WirePreviewToRenderer();
                 bool on = i == level;
-                slot.SetActiveLod(on ? slot.previewAsset : null, on && slot.previewAsset != null);
+                if (on)
+                    slot.SetActiveLod(slot.previewAsset, slot.previewAsset != null);
+                else
+                {
+                    slot.gameObject.SetActive(false);
+                    // m_Asset stays wired via WirePreviewToRenderer for Inspector visibility.
+                }
             }
             editorPreviewLod = level;
             activeLod = level;
